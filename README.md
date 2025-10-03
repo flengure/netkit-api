@@ -28,7 +28,7 @@ docker build -t netkit-api .
 - 🌍 **Web Inspection** - curl HTTP/HTTPS inspection
 - 📡 **Network Diagnostics** - traceroute, mtr, ping
 - 🚀 **Async Execution** - Background jobs for long-running scans
-- 🔑 **Authentication** - Optional JWT tokens + API keys
+- 🔑 **Authentication** - OIDC, JWT tokens, or API keys
 - 🛡️ **Security** - Rate limiting, whitelist/blacklist, input validation
 - 🔌 **MCP Integration** - Model Context Protocol for Claude AI
 
@@ -71,9 +71,19 @@ docker run -d \
   -p 8090:8090 \
   -e JWT_SECRET=your-secret-key \
   flengure/netkit-api:latest --http
+
+# With OIDC auth (recommended for production)
+docker run -d \
+  -p 8090:8090 \
+  -e OIDC_ENABLED=true \
+  -e OIDC_ISSUER=https://auth.u.tomage.net/application/o/netkit/ \
+  -e OIDC_REQUIRED_SCOPES=netkit.exec \
+  flengure/netkit-api:latest --http
 ```
 
-**Note:** Authentication is **optional** in HTTP mode. If neither `JWT_SECRET` nor `API_KEYS` are set, the API accepts all requests (use only for local/trusted networks).
+**Note:** Authentication is **optional** in HTTP mode. If no auth method is configured (`OIDC_ENABLED`, `JWT_SECRET`, or `API_KEYS`), the API accepts all requests (use only for local/trusted networks).
+
+**OIDC Setup**: For production deployments, OIDC is recommended. See [docs/OIDC_SETUP.md](docs/OIDC_SETUP.md) for complete setup guide with Authentik, Auth0, Keycloak, Azure AD, and more.
 
 ### Hardened Production Deployment
 

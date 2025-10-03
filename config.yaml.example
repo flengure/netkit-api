@@ -1,0 +1,69 @@
+# netkit-api Configuration Example
+#
+# This file shows all available configuration options.
+# Copy to config.yaml and customize for your deployment.
+#
+# Note: Environment variables can override any setting here.
+
+# ===== Authentication =====
+
+# Disable all authentication (NOT RECOMMENDED for production)
+# auth_enabled: false
+
+# API Keys - Simple token-based authentication
+api_keys:
+  - "your-secret-api-key-here"
+  - "another-api-key"
+
+# JWT - Shared secret token authentication
+# jwt_secret: "your-jwt-secret-here"
+
+# OIDC - OpenID Connect authentication (RECOMMENDED for production)
+# Supports Authentik, Auth0, Keycloak, Azure AD, Google Identity, etc.
+oidc_enabled: true
+oidc_issuer: "https://auth.u.tomage.net/application/o/netkit/"
+oidc_audience: "netkit-api"  # Optional: validate audience claim
+oidc_required_scopes:  # Optional: require specific scopes
+  - "netkit.exec"
+
+# JWKS URI (auto-discovered if not provided)
+# oidc_jwks_uri: "https://auth.u.tomage.net/application/o/netkit/jwks/"
+
+# ===== Rate Limiting =====
+
+rate_limit_global: 100  # Max requests per minute (all clients)
+rate_limit_per_ip: 20   # Max requests per minute per IP
+rate_limit_per_key: 50  # Max requests per minute per API key
+
+# ===== Target Validation =====
+
+# Whitelist: Only allow scanning these targets
+scan_whitelist:
+  - "10.0.0.0/8"
+  - "192.168.0.0/16"
+  - "*.example.com"
+  - "scanme.nmap.org"
+
+# Blacklist: Explicitly block these targets
+scan_blacklist:
+  - "*.internal.corp"
+  - "*.local"
+  - "localhost"
+  - "169.254.0.0/16"  # Link-local
+
+# Allow scanning private IP ranges (RFC 1918)
+allow_private_ips: false
+
+# ===== Job Management =====
+
+max_concurrent_jobs: 100
+job_cleanup_interval: 3600  # Cleanup completed jobs after 1 hour
+
+# ===== Server Settings =====
+
+api_port: 8090
+ssh_dir: "/home/runner/.ssh"
+
+# ===== Logging =====
+
+# log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR

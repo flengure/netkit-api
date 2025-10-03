@@ -25,6 +25,7 @@ from target_validator import TargetValidator
 from job_manager import JobManager
 from capabilities import get_capabilities_info
 from config_loader import load_config
+from oidc_validator import OIDCConfig, MultiOIDCValidator
 
 app = FastAPI(
     title="netkit-api",
@@ -50,11 +51,45 @@ config = load_config()
 JWT_SECRET = config.get_string("jwt_secret", "JWT_SECRET", "")
 API_KEYS = config.get_list("api_keys", "API_KEYS", [])
 
-# Enable auth only if JWT_SECRET or API_KEYS are configured
-AUTH_ENABLED = bool(JWT_SECRET or API_KEYS)
+# OIDC Configuration
+OIDC_ENABLED = config.get_bool("oidc_enabled", "OIDC_ENABLED", False)
+OIDC_ISSUER = config.get_string("oidc_issuer", "OIDC_ISSUER", "")
+OIDC_AUDIENCE = config.get_string("oidc_audience", "OIDC_AUDIENCE", None)
+OIDC_JWKS_URI = config.get_string("oidc_jwks_uri", "OIDC_JWKS_URI", None)
+OIDC_REQUIRED_SCOPES = config.get_list("oidc_required_scopes", "OIDC_REQUIRED_SCOPES", [])
+
+# Initialize OIDC validator if enabled
+oidc_validator = None
+if OIDC_ENABLED and OIDC_ISSUER:
+    try:
+        oidc_config = OIDCConfig(
+            issuer=OIDC_ISSUER,
+            audience=OIDC_AUDIENCE,
+            jwks_uri=OIDC_JWKS_URI,
+            required_scopes=OIDC_REQUIRED_SCOPES if OIDC_REQUIRED_SCOPES else None
+        )
+        oidc_validator = MultiOIDCValidator([oidc_config])
+        if oidc_validator.is_enabled():
+            logger.info(f"OIDC authentication enabled for issuer: {OIDC_ISSUER}")
+        else:
+            logger.warning("OIDC enabled but validator failed to initialize")
+            oidc_validator = None
+    except Exception as e:
+        logger.error(f"Failed to initialize OIDC validator: {e}")
+        oidc_validator = None
+
+# Enable auth if ANY method is configured
+AUTH_ENABLED = bool(JWT_SECRET or API_KEYS or (oidc_validator and oidc_validator.is_enabled()))
 
 if AUTH_ENABLED:
-    logger.info("Authentication enabled")
+    auth_methods = []
+    if JWT_SECRET:
+        auth_methods.append("JWT")
+    if API_KEYS:
+        auth_methods.append("API Keys")
+    if oidc_validator and oidc_validator.is_enabled():
+        auth_methods.append("OIDC")
+    logger.info(f"Authentication enabled: {', '.join(auth_methods)}")
     if JWT_SECRET and JWT_SECRET == "dev-secret":
         logger.warning("Using default JWT secret - this is insecure for production!")
 else:
@@ -182,15 +217,31 @@ def verify_api_key(request: Request, x_api_key: Optional[str], authorization: Op
 
 def check_auth(request: Request, authorization: Optional[str], x_api_key: Optional[str]) -> tuple[bool, Optional[str]]:
     """
-    Check authentication (JWT or API key)
+    Check authentication (OIDC, JWT, or API key)
+
+    Priority order:
+    1. OIDC Bearer token (if enabled)
+    2. JWT Bearer token (if configured)
+    3. API Key (if configured)
 
     Returns:
         (authenticated: bool, api_key: Optional[str])
     """
+    # Try OIDC first (if enabled)
+    if oidc_validator and oidc_validator.is_enabled():
+        oidc_payload = oidc_validator.validate_token(authorization)
+        if oidc_payload:
+            return (True, None)
+
+    # Try JWT (shared secret)
     jwt_valid = verify_jwt(authorization)
+    if jwt_valid:
+        return (True, None)
+
+    # Try API key
     api_key = verify_api_key(request, x_api_key, authorization)
 
-    return (jwt_valid is not None or api_key is not None), api_key
+    return (api_key is not None, api_key)
 
 
 # ===== Middleware =====
