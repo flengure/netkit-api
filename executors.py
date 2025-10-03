@@ -27,6 +27,8 @@ class SSHExecutor(BaseExecutor):
         "-o", "StrictHostKeyChecking=no",
         "-o", "CheckHostIP=no",
         "-o", "LogLevel=ERROR",
+        "-o", "ControlMaster=no",  # Disable ControlMaster to avoid socket creation
+        "-o", "ControlPath=none",  # No control path needed
     ]
 
     def process_args(self, args: List[str], params: Dict[str, Any]) -> List[str]:
