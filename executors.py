@@ -35,12 +35,13 @@ class SSHExecutor(BaseExecutor):
 
         Supports legacy exec_ssh.py parameter format for backward compatibility
         """
-        # If using legacy format with host/command params
-        if "host" in params and "command" not in params and "args" not in params:
+        # If using MCP/API format with host parameter (not standard ssh command line)
+        # This handles: {"host": "example.com", "user": "root", "command": "whoami"}
+        if "host" in params:
             return self._build_ssh_command_legacy(params)
 
         # Standard format: ssh [options] user@host command
-        # Just pass through the args
+        # This handles: {"command": "ssh user@host whoami"} or {"args": ["user@host", "whoami"]}
         return args
 
     def _build_ssh_command_legacy(self, params: Dict[str, Any]) -> List[str]:
@@ -85,10 +86,18 @@ class SSHExecutor(BaseExecutor):
         user = params.get("user")
         target = f"{user}@{host}" if user else host
 
-        # Command
-        command = params.get("command", "")
+        # Command - handle both 'command' string and 'args' array
+        if "args" in params:
+            # args format: ["whoami"] or ["ls", "-la"]
+            command_parts = params["args"]
+        elif "command" in params:
+            # command format: "whoami" or "ls -la"
+            import shlex
+            command_parts = shlex.split(params["command"]) if params["command"] else []
+        else:
+            command_parts = []
 
-        return opts + [target, "--", command]
+        return opts + [target] + (["--"] + command_parts if command_parts else [])
 
 
 class NmapExecutor(BaseExecutor):
