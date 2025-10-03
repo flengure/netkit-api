@@ -28,35 +28,51 @@ docker build -t netkit-api .
 - 🌍 **Web Inspection** - curl HTTP/HTTPS inspection
 - 📡 **Network Diagnostics** - traceroute, mtr, ping
 - 🚀 **Async Execution** - Background jobs for long-running scans
-- 🔑 **Authentication** - JWT tokens + API keys
+- 🔑 **Authentication** - Optional JWT tokens + API keys
 - 🛡️ **Security** - Rate limiting, whitelist/blacklist, input validation
 - 🔌 **MCP Integration** - Model Context Protocol for Claude AI
 
 ## Quick Start
 
-### Full Features (Recommended)
-Includes all tools with privileged network operations:
+### MCP Server (Local/AI Assistants)
+Run without authentication for local MCP integration:
 
 ```bash
+docker run -i \
+  --cap-add=NET_RAW \
+  --cap-add=NET_ADMIN \
+  flengure/netkit-api:latest \
+  python /app/mcp/server.py
+```
+
+### HTTP API (Network Access)
+Run with authentication for network-accessible API:
+
+```bash
+# With API key auth
 docker run -d \
   -p 8090:8090 \
   --cap-add=NET_RAW \
   --cap-add=NET_ADMIN \
-  -e JWT_SECRET=your-secret-key \
   -e API_KEYS=api-key-1,api-key-2 \
   -v ~/.ssh:/home/runner/.ssh:ro \
   flengure/netkit-api:latest
-```
 
-### Limited Features (More Secure)
-SSH, DNS, and web tools only (no privileged scanning):
-
-```bash
+# Or with JWT auth
 docker run -d \
   -p 8090:8090 \
   -e JWT_SECRET=your-secret-key \
   flengure/netkit-api:latest
+
+# Or both
+docker run -d \
+  -p 8090:8090 \
+  -e JWT_SECRET=your-secret-key \
+  -e API_KEYS=api-key-1,api-key-2 \
+  flengure/netkit-api:latest
 ```
+
+**Note:** Authentication is **optional**. If neither `JWT_SECRET` nor `API_KEYS` are set, the API accepts all requests (use only for local/trusted networks).
 
 Check available features:
 ```bash
@@ -188,16 +204,19 @@ curl http://localhost:8090/tools/nmap
 
 ### System
 - `GET /healthz` - Health check with capabilities
-- `GET /stats` - API statistics (auth required)
+- `GET /stats` - API statistics
 
 ## Configuration
 
 ### Environment Variables
 
-**Authentication**:
+**Authentication** (optional):
 ```bash
-JWT_SECRET=your-secret-key-here
-API_KEYS=key1,key2,key3
+# Enable authentication by setting one or both:
+JWT_SECRET=your-secret-key-here  # Enable JWT authentication
+API_KEYS=key1,key2,key3          # Enable API key authentication
+
+# If neither is set, authentication is disabled (local/trusted networks only)
 ```
 
 **Rate Limiting**:

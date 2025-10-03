@@ -43,11 +43,18 @@ logger = logging.getLogger(__name__)
 # ===== Configuration =====
 
 # Authentication
-JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
-if JWT_SECRET == "dev-secret":
-    logger.warning("Using default JWT secret - this is insecure for production!")
-
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
 API_KEYS = [k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()]
+
+# Enable auth only if JWT_SECRET or API_KEYS are configured
+AUTH_ENABLED = bool(JWT_SECRET or API_KEYS)
+
+if AUTH_ENABLED:
+    logger.info("Authentication enabled")
+    if JWT_SECRET and JWT_SECRET == "dev-secret":
+        logger.warning("Using default JWT secret - this is insecure for production!")
+else:
+    logger.warning("Authentication DISABLED - all requests will be accepted")
 SSH_DIR = os.path.expanduser(os.environ.get("SSH_DIR", "~/.ssh"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 
@@ -279,11 +286,13 @@ async def exec_tool(
        {"tool": "dig", "command": "google.com +short"}
        ```
     """
-    # Authentication
-    authenticated, api_key = check_auth(request, authorization, x_api_key)
-    if not authenticated:
-        logger.warning(f"Unauthorized access attempt from {request.client.host}")
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Authentication (if enabled)
+    api_key = None
+    if AUTH_ENABLED:
+        authenticated, api_key = check_auth(request, authorization, x_api_key)
+        if not authenticated:
+            logger.warning(f"Unauthorized access attempt from {request.client.host}")
+            raise HTTPException(status_code=401, detail="Unauthorized")
 
     # Rate limiting
     allowed, reason = rate_limiter.check_limit(
@@ -476,10 +485,11 @@ async def get_stats(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key")
 ):
     """Get API statistics (rate limits, jobs, etc.)"""
-    # Authentication
-    authenticated, _ = check_auth(request, authorization, x_api_key)
-    if not authenticated:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Authentication (if enabled)
+    if AUTH_ENABLED:
+        authenticated, _ = check_auth(request, authorization, x_api_key)
+        if not authenticated:
+            raise HTTPException(status_code=401, detail="Unauthorized")
 
     return {
         "rate_limiter": rate_limiter.get_stats(),
