@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  netkit-api:
+    image: flengure/netkit-api:latest
+
+    # Security: Read-only filesystem with tmpfs for writable areas
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100M
+      - /var/run:noexec,nosuid,size=10M
+
+    ports:
+      - "8090:8090"
+
+    # Network capabilities required for privileged scans
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+    # Optional: Mount config file
+    volumes:
+      - ./config.yaml:/etc/netkit-api/config.yaml:ro
+      # - ~/.ssh:/home/runner/.ssh:ro  # Uncomment for SSH functionality
+
+    environment:
+      # Authentication (optional - if not set, auth is disabled)
+      # - JWT_SECRET=${JWT_SECRET}
+      # - API_KEYS=${API_KEYS}
+
+      # Target validation
+      - SCAN_WHITELIST=${SCAN_WHITELIST:-}
+      - SCAN_BLACKLIST=${SCAN_BLACKLIST:-}
+      - ALLOW_PRIVATE_IPS=${ALLOW_PRIVATE_IPS:-false}
+
+      # Rate limiting
+      - RATE_LIMIT_GLOBAL=${RATE_LIMIT_GLOBAL:-100}
+      - RATE_LIMIT_PER_IP=${RATE_LIMIT_PER_IP:-20}
+      - RATE_LIMIT_PER_KEY=${RATE_LIMIT_PER_KEY:-50}
+
+    restart: unless-stopped
+
+    # Security: Run as non-root user (already configured in image)
+    # Security: Drop all capabilities except NET_RAW and NET_ADMIN
+    cap_drop:
+      - ALL

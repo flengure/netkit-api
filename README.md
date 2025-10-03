@@ -74,6 +74,35 @@ docker run -d \
 
 **Note:** Authentication is **optional**. If neither `JWT_SECRET` nor `API_KEYS` are set, the API accepts all requests (use only for local/trusted networks).
 
+### Hardened Production Deployment
+
+For maximum security, run with read-only filesystem:
+
+```bash
+docker run -d \
+  --read-only \
+  --tmpfs /tmp:noexec,nosuid,size=100M \
+  --tmpfs /var/run:noexec,nosuid,size=10M \
+  -p 8090:8090 \
+  --cap-add=NET_RAW \
+  --cap-add=NET_ADMIN \
+  --cap-drop=ALL \
+  -e API_KEYS=your-api-key \
+  flengure/netkit-api:latest
+```
+
+Or use the provided `docker-compose.yml`:
+
+```bash
+docker-compose up -d
+```
+
+**Benefits:**
+- Immutable filesystem prevents persistence if compromised
+- tmpfs provides volatile writable space (lost on restart)
+- Minimal capabilities (only NET_RAW/NET_ADMIN)
+- No new files can be written to container filesystem
+
 Check available features:
 ```bash
 curl http://localhost:8090/healthz
