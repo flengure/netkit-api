@@ -53,6 +53,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY api/requirements.txt /tmp/requirements.txt
 RUN uv pip install --system --no-cache -r /tmp/requirements.txt
 
+# Copy entrypoint script (as root before user switch)
+COPY entrypoint.sh /usr/local/bin/netkit-api
+RUN chmod +x /usr/local/bin/netkit-api
+
 # Create non-root user
 RUN useradd -m -u 1000 runner
 
@@ -80,9 +84,9 @@ ENV PYTHONUNBUFFERED=1 \
     SSH_DIR=/home/runner/.ssh \
     PYTHONPATH=/app
 
-# Expose API port
+# Expose API port (only used in --http mode)
 EXPOSE 8090
 
-# Default to API server
-# Can override to run MCP server: docker run ... python /app/mcp/server.py
-ENTRYPOINT ["python", "/app/api/api.py"]
+# Entrypoint defaults to MCP stdio server
+# Use --http flag for HTTP API mode
+ENTRYPOINT ["/usr/local/bin/netkit-api"]

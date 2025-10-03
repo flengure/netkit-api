@@ -4,6 +4,9 @@ services:
   netkit-api:
     image: flengure/netkit-api:latest
 
+    # Run in HTTP API mode (default is MCP stdio)
+    command: ["--http"]
+
     # Security: Read-only filesystem with tmpfs for writable areas
     read_only: true
     tmpfs:

@@ -34,45 +34,46 @@ docker build -t netkit-api .
 
 ## Quick Start
 
-### MCP Server (Local/AI Assistants)
-Run without authentication for local MCP integration:
+### MCP Server (Default - for AI Assistants)
+The container defaults to MCP stdio server mode:
 
 ```bash
+# Basic MCP mode (default)
+docker run -i flengure/netkit-api:latest
+
+# With full capabilities
 docker run -i \
   --cap-add=NET_RAW \
   --cap-add=NET_ADMIN \
-  flengure/netkit-api:latest \
-  python /app/mcp/server.py
+  flengure/netkit-api:latest
 ```
 
 ### HTTP API (Network Access)
-Run with authentication for network-accessible API:
+Use `--http` flag for HTTP API server mode:
 
 ```bash
-# With API key auth
+# Basic HTTP API
+docker run -d \
+  -p 8090:8090 \
+  flengure/netkit-api:latest --http
+
+# With authentication and capabilities
 docker run -d \
   -p 8090:8090 \
   --cap-add=NET_RAW \
   --cap-add=NET_ADMIN \
   -e API_KEYS=api-key-1,api-key-2 \
   -v ~/.ssh:/home/runner/.ssh:ro \
-  flengure/netkit-api:latest
+  flengure/netkit-api:latest --http
 
-# Or with JWT auth
+# With JWT auth
 docker run -d \
   -p 8090:8090 \
   -e JWT_SECRET=your-secret-key \
-  flengure/netkit-api:latest
-
-# Or both
-docker run -d \
-  -p 8090:8090 \
-  -e JWT_SECRET=your-secret-key \
-  -e API_KEYS=api-key-1,api-key-2 \
-  flengure/netkit-api:latest
+  flengure/netkit-api:latest --http
 ```
 
-**Note:** Authentication is **optional**. If neither `JWT_SECRET` nor `API_KEYS` are set, the API accepts all requests (use only for local/trusted networks).
+**Note:** Authentication is **optional** in HTTP mode. If neither `JWT_SECRET` nor `API_KEYS` are set, the API accepts all requests (use only for local/trusted networks).
 
 ### Hardened Production Deployment
 
@@ -88,7 +89,7 @@ docker run -d \
   --cap-add=NET_ADMIN \
   --cap-drop=ALL \
   -e API_KEYS=your-api-key \
-  flengure/netkit-api:latest
+  flengure/netkit-api:latest --http
 ```
 
 Or use the provided `docker-compose.yml`:
@@ -301,9 +302,9 @@ services:
 
 ## MCP Server
 
-netkit-api includes an MCP (Model Context Protocol) server for integration with Claude AI.
+netkit-api includes an MCP (Model Context Protocol) server for integration with Claude AI and other AI assistants.
 
-### Run as MCP Server
+### Quick Start - Command Line
 
 ```bash
 docker run -i \
@@ -314,9 +315,124 @@ docker run -i \
   python /app/mcp/server.py
 ```
 
+### Claude Desktop Configuration
+
+Add to your Claude Desktop config file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`  
+**Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "netkit-api": {
+      "type": "stdio",
+      "description": "Network diagnostics, scanning, and security toolkit",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--cap-add=NET_RAW",
+        "--cap-add=NET_ADMIN",
+        "-v",
+        "/Users/YOUR_USERNAME/.ssh:/home/runner/.ssh:ro",
+        "-e",
+        "SSH_DIR=/home/runner/.ssh",
+        "-e",
+        "SCAN_WHITELIST=10.0.0.0/8,192.168.0.0/16,*.example.com",
+        "-e",
+        "SCAN_BLACKLIST=*.internal.corp,*.local",
+        "flengure/netkit-api:latest",
+        "python",
+        "/app/mcp/server.py"
+      ]
+    }
+  }
+}
+```
+
+**⚠️ Important Notes:**
+
+1. **Use absolute paths** - Replace `/Users/YOUR_USERNAME/.ssh` with your actual home directory path. Docker does not expand `~` (tilde) when used in JSON config files.
+   - macOS/Linux: Use full path like `/Users/john/.ssh` or `/home/john/.ssh`
+   - Windows: Use forward slashes like `C:/Users/john/.ssh`
+
+2. **Network capabilities are optional** - The `--cap-add` flags enable advanced scanning features:
+   - **With capabilities**: nmap SYN scans, masscan, traceroute, mtr, OS detection
+   - **Without capabilities**: All other tools still work (dig, whois, curl, sslscan, testssl.sh, nikto, whatweb, ssh, nc, ping)
+   - Remove `"--cap-add=NET_RAW", "--cap-add=NET_ADMIN",` if you only need basic tools
+
+3. **SSH key access is optional** - The `.ssh` volume mount provides:
+   - ✅ Access to your SSH private keys (`id_rsa`, `id_ed25519`, etc.)
+   - ✅ Access to your `~/.ssh/config` shortcuts and aliases
+   - ✅ Access to your `~/.ssh/known_hosts` for host verification
+   - ❌ **Does NOT disable the `ssh` tool** - SSH remains available even without the mount, you just won't have access to your local keys and config
+   - Remove the volume mount lines if you don't need SSH key-based authentication
+
+4. **Whitelist/Blacklist are inline** - `SCAN_WHITELIST` and `SCAN_BLACKLIST` are comma-separated values in environment variables, not file paths. Adjust the values to match your network security requirements.
+
+**After adding the config:**
+1. Pull the Docker image: `docker pull flengure/netkit-api:latest`
+2. Restart Claude Desktop completely
+3. You'll see "netkit-api" available in your MCP servers
+
+### Minimal Configuration (Basic Tools Only)
+
+If you only need DNS, HTTP, and security testing tools without advanced scanning:
+
+```json
+{
+  "mcpServers": {
+    "netkit-api": {
+      "type": "stdio",
+      "description": "Network diagnostics and security toolkit",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "flengure/netkit-api:latest",
+        "python",
+        "/app/mcp/server.py"
+      ]
+    }
+  }
+}
+```
+
+This provides: dig, host, whois, curl, ping, nc, sslscan, testssl.sh, nikto, whatweb
+
 ### MCP Tools
 
-All tools are exposed as MCP tools with the same names (ssh, nmap, dig, curl, etc.)
+All 15 tools are exposed as MCP tools with the same names:
+- **SSH**: ssh
+- **Network Scanning**: nmap, masscan (requires capabilities)
+- **DNS**: dig, host, whois
+- **HTTP/Security**: curl, sslscan, testssl.sh, nikto, whatweb
+- **Network Diagnostics**: traceroute (requires capabilities), mtr (requires capabilities), ping, nc
+
+### Troubleshooting
+
+**"includes invalid characters for a local volume name"**
+- You're using `~` in the JSON config. Replace it with the absolute path to your home directory.
+- ❌ Wrong: `"~/.ssh:/home/runner/.ssh:ro"`
+- ✅ Correct: `"/Users/john/.ssh:/home/runner/.ssh:ro"`
+
+**"Permission denied" or tools not working**
+- Some tools require `--cap-add=NET_RAW` and `--cap-add=NET_ADMIN`
+- Check which tools need capabilities in the Available Tools table above
+- If using only basic tools (dig, curl, whois), you can remove the capability flags
+
+**"SSH authentication failed" or "Host key verification failed"**
+- Ensure your `.ssh` directory is mounted: `"-v", "/full/path/to/.ssh:/home/runner/.ssh:ro"`
+- Verify your private keys have correct permissions (600) on the host
+- The `ssh` tool will still work without the mount, you just need to provide credentials another way
+
+**"Server disconnected" or MCP not connecting**
+- Check Docker is running: `docker ps`
+- Pull the image manually: `docker pull flengure/netkit-api:latest`
+- Verify JSON syntax in your Claude config (use a JSON validator)
+- Check Claude Desktop logs for detailed error messages
 
 ## Security
 
