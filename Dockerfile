@@ -46,6 +46,13 @@ RUN mkdir -p /etc/ssh && printf '%s\n' \
     '    LogLevel ERROR' \
     > /etc/ssh/ssh_config
 
+# Install uv for fast Python dependency management (as root)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Copy requirements and install Python dependencies with uv (as root)
+COPY api/requirements.txt /tmp/requirements.txt
+RUN uv pip install --system --no-cache -r /tmp/requirements.txt
+
 # Create non-root user
 RUN useradd -m -u 1000 runner
 
@@ -55,10 +62,6 @@ RUN mkdir -p /app/api /app/mcp && chown -R runner:runner /app
 # Switch to non-root user
 USER runner
 WORKDIR /home/runner
-
-# Copy requirements and install Python dependencies
-COPY api/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Copy application code
 COPY --chown=runner:runner base_executor.py /app/
