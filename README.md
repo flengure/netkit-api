@@ -52,38 +52,162 @@ docker run -i \
 Use `--http` flag for HTTP API server mode:
 
 ```bash
-# Basic HTTP API
+# No authentication (local/trusted networks only)
 docker run -d \
   -p 8090:8090 \
   flengure/netkit-api:latest --http
+```
 
-# With authentication and capabilities
+## Authentication
+
+netkit-api supports **three authentication methods** for HTTP API mode. MCP stdio mode (default) does not require authentication.
+
+### No Authentication (Default)
+
+If no auth method is configured, the API accepts all requests:
+
+```bash
+docker run -d -p 8090:8090 flengure/netkit-api:latest --http
+```
+
+⚠️ **Use only for**:
+- Local development
+- Trusted internal networks
+- Behind a separate authentication layer (reverse proxy, VPN)
+
+### Method 1: API Keys (Simple)
+
+Best for: **Service-to-service communication, simple deployments**
+
+```bash
+# Generate secure API keys
+API_KEY=$(openssl rand -base64 32)
+
+# Run with API keys
 docker run -d \
   -p 8090:8090 \
-  --cap-add=NET_RAW \
-  --cap-add=NET_ADMIN \
-  -e API_KEYS=api-key-1,api-key-2 \
-  -v ~/.ssh:/home/runner/.ssh:ro \
+  -e API_KEYS=$API_KEY \
   flengure/netkit-api:latest --http
+```
 
-# With JWT auth
+**Usage:**
+```bash
+# Option A: X-API-Key header
+curl -H "X-API-Key: $API_KEY" http://localhost:8090/exec \
+  -d '{"command":"dig google.com +short"}'
+
+# Option B: Authorization header
+curl -H "Authorization: ApiKey $API_KEY" http://localhost:8090/exec \
+  -d '{"command":"dig google.com +short"}'
+```
+
+**Multiple keys:**
+```bash
+-e API_KEYS=key1,key2,key3
+```
+
+### Method 2: JWT Tokens (Shared Secret)
+
+Best for: **Simple token-based auth, custom integrations**
+
+```bash
+# Generate secure JWT secret
+JWT_SECRET=$(openssl rand -hex 32)
+
+# Run with JWT
 docker run -d \
   -p 8090:8090 \
-  -e JWT_SECRET=your-secret-key \
+  -e JWT_SECRET=$JWT_SECRET \
   flengure/netkit-api:latest --http
+```
 
-# With OIDC auth (recommended for production)
+**Generate tokens** (using PyJWT):
+```python
+import jwt
+import datetime
+
+payload = {
+    'sub': 'user@example.com',
+    'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+}
+token = jwt.encode(payload, 'your-jwt-secret', algorithm='HS256')
+```
+
+**Usage:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8090/exec \
+  -d '{"command":"dig google.com +short"}'
+```
+
+### Method 3: OIDC/OAuth2 (Recommended for Production)
+
+Best for: **Production deployments, enterprise environments, centralized auth**
+
+**Supported providers:**
+- ✅ Authentik (recommended open-source)
+- ✅ Auth0
+- ✅ Keycloak
+- ✅ Azure AD / Entra ID
+- ✅ Google Identity
+- ✅ Okta
+- ✅ Any OIDC-compliant provider
+
+```bash
 docker run -d \
   -p 8090:8090 \
   -e OIDC_ENABLED=true \
-  -e OIDC_ISSUER=https://auth.u.tomage.net/application/o/netkit/ \
+  -e OIDC_ISSUER=https://auth.example.com/application/o/netkit/ \
+  -e OIDC_AUDIENCE=netkit-api \
   -e OIDC_REQUIRED_SCOPES=netkit.exec \
   flengure/netkit-api:latest --http
 ```
 
-**Note:** Authentication is **optional** in HTTP mode. If no auth method is configured (`OIDC_ENABLED`, `JWT_SECRET`, or `API_KEYS`), the API accepts all requests (use only for local/trusted networks).
+**Get token from provider:**
+```bash
+# Example: Authentik (client_credentials flow)
+ACCESS_TOKEN=$(curl -sS -X POST \
+  -d "grant_type=client_credentials" \
+  -d "client_id=<YOUR_CLIENT_ID>" \
+  -d "client_secret=<YOUR_CLIENT_SECRET>" \
+  -d "scope=netkit.exec" \
+  https://auth.example.com/application/o/token/ | jq -r .access_token)
+```
 
-**OIDC Setup**: For production deployments, OIDC is recommended. See [docs/OIDC_SETUP.md](docs/OIDC_SETUP.md) for complete setup guide with Authentik, Auth0, Keycloak, Azure AD, and more.
+**Usage:**
+```bash
+curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8090/exec \
+  -d '{"command":"dig google.com +short"}'
+```
+
+**Why OIDC?**
+- ✅ No shared secrets (uses public key cryptography)
+- ✅ Automatic key rotation support
+- ✅ Centralized authentication across services
+- ✅ Fine-grained access control with scopes
+- ✅ Industry-standard protocol
+
+**Complete setup guide:** [docs/OIDC_SETUP.md](docs/OIDC_SETUP.md)
+
+### Multiple Authentication Methods
+
+You can enable multiple methods simultaneously:
+
+```bash
+docker run -d \
+  -p 8090:8090 \
+  -e OIDC_ENABLED=true \
+  -e OIDC_ISSUER=https://auth.example.com/ \
+  -e API_KEYS=legacy-key-for-old-clients \
+  -e JWT_SECRET=backup-secret \
+  flengure/netkit-api:latest --http
+```
+
+**Priority order:**
+1. OIDC Bearer token (if OIDC enabled)
+2. JWT Bearer token (if JWT_SECRET set)
+3. API Key (if API_KEYS set)
+
+The API will try each method in order until one succeeds.
 
 ### Hardened Production Deployment
 
@@ -250,13 +374,23 @@ curl http://localhost:8090/tools/nmap
 
 ### Environment Variables
 
-**Authentication** (optional):
+**Authentication** (optional - HTTP API mode only):
 ```bash
-# Enable authentication by setting one or both:
-JWT_SECRET=your-secret-key-here  # Enable JWT authentication
-API_KEYS=key1,key2,key3          # Enable API key authentication
+# Method 1: API Keys (simple)
+API_KEYS=key1,key2,key3
 
-# If neither is set, authentication is disabled (local/trusted networks only)
+# Method 2: JWT (shared secret)
+JWT_SECRET=your-secret-key-here
+
+# Method 3: OIDC (recommended for production)
+OIDC_ENABLED=true
+OIDC_ISSUER=https://auth.example.com/
+OIDC_AUDIENCE=netkit-api                  # Optional: validate audience claim
+OIDC_REQUIRED_SCOPES=netkit.exec,admin    # Optional: require specific scopes
+OIDC_JWKS_URI=https://auth.example.com/jwks  # Optional: auto-discovered if not set
+
+# If no auth method is configured, API accepts all requests (use only on trusted networks)
+# You can enable multiple methods - they will be tried in priority order: OIDC → JWT → API Key
 ```
 
 **Rate Limiting**:
