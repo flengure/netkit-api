@@ -16,12 +16,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     httpie ruby \
     # Network diagnostics
     traceroute mtr-tiny iputils-ping iproute2 \
+    # Capabilities management for masscan
+    libcap2-bin \
+    # Perl dependencies for nikto
+    libnet-ssleay-perl libcrypt-ssleay-perl \
     # Build dependencies (for some Python packages)
     gcc python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install nikto separately (may not be available in all repos)
-RUN apt-get update && apt-get install -y --no-install-recommends nikto || true && rm -rf /var/lib/apt/lists/*
+# Grant masscan NET_RAW capability for non-root execution
+RUN setcap cap_net_raw+ep /usr/bin/masscan
+
+# Install nikto from GitHub (not in Debian repos)
+RUN curl -L https://github.com/sullo/nikto/archive/2.5.0.tar.gz | \
+    tar xz -C /opt && \
+    ln -s /opt/nikto-2.5.0/program/nikto.pl /usr/local/bin/nikto && \
+    chmod +x /usr/local/bin/nikto && \
+    ln -s /opt/nikto-2.5.0/program /opt/nikto-2.5.0/program/nikto
 
 # Install testssl.sh (script-based tool)
 RUN curl -L https://github.com/drwetter/testssl.sh/archive/v3.0.8.tar.gz | \
