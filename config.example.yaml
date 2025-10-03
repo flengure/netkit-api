@@ -1,0 +1,43 @@
+# netkit-api configuration file (YAML format)
+# Place at: /etc/netkit-api/config.yaml or ./config.yaml
+# Environment variables override file settings
+
+# Authentication (optional)
+# If not set, authentication is disabled
+# api_keys:
+#   - your-api-key-1
+#   - your-api-key-2
+# jwt_secret: your-secret-key-here
+
+# Rate Limiting
+rate_limit_global: 100      # requests/min globally
+rate_limit_per_ip: 20       # requests/min per IP
+rate_limit_per_key: 50      # requests/min per API key
+
+# Target Validation
+# Whitelist: IPs/domains/wildcards to allow (if set, only these are allowed)
+scan_whitelist:
+  - 10.0.0.0/8
+  - 192.168.0.0/16
+  - "*.example.com"
+  - scanme.nmap.org
+
+# Blacklist: IPs/domains/wildcards to block (takes precedence over whitelist)
+scan_blacklist:
+  - 10.0.0.1
+  - 192.168.1.1
+  - "*.internal.corp"
+  - "*.local"
+
+# Allow scanning private IP ranges (RFC1918)
+allow_private_ips: false
+
+# Job Management
+max_concurrent_jobs: 100
+job_cleanup_interval: 3600  # seconds
+
+# SSH
+ssh_dir: ~/.ssh
+
+# API Server
+api_port: 8090

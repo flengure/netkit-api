@@ -66,6 +66,7 @@ COPY --chown=runner:runner rate_limiter.py /app/
 COPY --chown=runner:runner target_validator.py /app/
 COPY --chown=runner:runner job_manager.py /app/
 COPY --chown=runner:runner capabilities.py /app/
+COPY --chown=runner:runner config_loader.py /app/
 COPY --chown=runner:runner executors.py /app/
 COPY --chown=runner:runner api/api.py /app/api/
 COPY --chown=runner:runner mcp/server.py /app/mcp/

@@ -1,0 +1,37 @@
+{
+  "_comment": "netkit-api configuration file (JSON format)",
+  "_comment2": "Place at: /etc/netkit-api/config.json or ./config.json",
+  "_comment3": "Environment variables override file settings",
+
+  "api_keys": [
+    "your-api-key-1",
+    "your-api-key-2"
+  ],
+  "jwt_secret": "your-secret-key-here",
+
+  "rate_limit_global": 100,
+  "rate_limit_per_ip": 20,
+  "rate_limit_per_key": 50,
+
+  "scan_whitelist": [
+    "10.0.0.0/8",
+    "192.168.0.0/16",
+    "*.example.com",
+    "scanme.nmap.org"
+  ],
+
+  "scan_blacklist": [
+    "10.0.0.1",
+    "192.168.1.1",
+    "*.internal.corp",
+    "*.local"
+  ],
+
+  "allow_private_ips": false,
+
+  "max_concurrent_jobs": 100,
+  "job_cleanup_interval": 3600,
+
+  "ssh_dir": "~/.ssh",
+  "api_port": 8090
+}

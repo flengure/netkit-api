@@ -19,13 +19,17 @@ if str(repo_root) not in sys.path:
 
 from executors import get_tool_registry
 from target_validator import TargetValidator
+from config_loader import load_config
 
 JSONRPC = "2.0"
 
-# Initialize components
-SCAN_WHITELIST = [x.strip() for x in os.environ.get("SCAN_WHITELIST", "").split(",") if x.strip()]
-SCAN_BLACKLIST = [x.strip() for x in os.environ.get("SCAN_BLACKLIST", "").split(",") if x.strip()]
-ALLOW_PRIVATE_IPS = os.environ.get("ALLOW_PRIVATE_IPS", "false").lower() == "true"
+# Load config from file (if present) + environment variables
+config = load_config()
+
+# Target validation (lists are merged: file + env)
+SCAN_WHITELIST = config.get_list("scan_whitelist", "SCAN_WHITELIST", [])
+SCAN_BLACKLIST = config.get_list("scan_blacklist", "SCAN_BLACKLIST", [])
+ALLOW_PRIVATE_IPS = config.get_bool("allow_private_ips", "ALLOW_PRIVATE_IPS", False)
 
 target_validator = TargetValidator(
     whitelist=SCAN_WHITELIST or None,

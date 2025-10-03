@@ -24,6 +24,7 @@ from rate_limiter import RateLimiter
 from target_validator import TargetValidator
 from job_manager import JobManager
 from capabilities import get_capabilities_info
+from config_loader import load_config
 
 app = FastAPI(
     title="netkit-api",
@@ -42,9 +43,12 @@ logger = logging.getLogger(__name__)
 
 # ===== Configuration =====
 
+# Load config from file (if present) + environment variables
+config = load_config()
+
 # Authentication
-JWT_SECRET = os.environ.get("JWT_SECRET", "")
-API_KEYS = [k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()]
+JWT_SECRET = config.get_string("jwt_secret", "JWT_SECRET", "")
+API_KEYS = config.get_list("api_keys", "API_KEYS", [])
 
 # Enable auth only if JWT_SECRET or API_KEYS are configured
 AUTH_ENABLED = bool(JWT_SECRET or API_KEYS)
@@ -55,22 +59,23 @@ if AUTH_ENABLED:
         logger.warning("Using default JWT secret - this is insecure for production!")
 else:
     logger.warning("Authentication DISABLED - all requests will be accepted")
-SSH_DIR = os.path.expanduser(os.environ.get("SSH_DIR", "~/.ssh"))
-API_PORT = int(os.environ.get("API_PORT", "8090"))
+
+SSH_DIR = os.path.expanduser(config.get_string("ssh_dir", "SSH_DIR", "~/.ssh"))
+API_PORT = config.get_int("api_port", "API_PORT", 8090)
 
 # Rate limiting
-RATE_LIMIT_GLOBAL = int(os.environ.get("RATE_LIMIT_GLOBAL", "100"))
-RATE_LIMIT_PER_IP = int(os.environ.get("RATE_LIMIT_PER_IP", "20"))
-RATE_LIMIT_PER_KEY = int(os.environ.get("RATE_LIMIT_PER_KEY", "50"))
+RATE_LIMIT_GLOBAL = config.get_int("rate_limit_global", "RATE_LIMIT_GLOBAL", 100)
+RATE_LIMIT_PER_IP = config.get_int("rate_limit_per_ip", "RATE_LIMIT_PER_IP", 20)
+RATE_LIMIT_PER_KEY = config.get_int("rate_limit_per_key", "RATE_LIMIT_PER_KEY", 50)
 
-# Target validation
-SCAN_WHITELIST = [x.strip() for x in os.environ.get("SCAN_WHITELIST", "").split(",") if x.strip()]
-SCAN_BLACKLIST = [x.strip() for x in os.environ.get("SCAN_BLACKLIST", "").split(",") if x.strip()]
-ALLOW_PRIVATE_IPS = os.environ.get("ALLOW_PRIVATE_IPS", "false").lower() == "true"
+# Target validation (lists are merged: file + env)
+SCAN_WHITELIST = config.get_list("scan_whitelist", "SCAN_WHITELIST", [])
+SCAN_BLACKLIST = config.get_list("scan_blacklist", "SCAN_BLACKLIST", [])
+ALLOW_PRIVATE_IPS = config.get_bool("allow_private_ips", "ALLOW_PRIVATE_IPS", False)
 
 # Job management
-MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "100"))
-JOB_CLEANUP_INTERVAL = int(os.environ.get("JOB_CLEANUP_INTERVAL", "3600"))
+MAX_CONCURRENT_JOBS = config.get_int("max_concurrent_jobs", "MAX_CONCURRENT_JOBS", 100)
+JOB_CLEANUP_INTERVAL = config.get_int("job_cleanup_interval", "JOB_CLEANUP_INTERVAL", 3600)
 
 # Request limits
 MAX_REQUEST_SIZE = 1024 * 1024  # 1MB
