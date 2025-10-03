@@ -3,7 +3,7 @@ FROM python:3.11-slim
 # Install all network/security tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core utilities
-    openssh-client ca-certificates curl wget git \
+    openssh-client ca-certificates curl wget git bsdmainutils \
     # Network scanning
     nmap masscan \
     # Service probing
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # SSL/TLS auditing
     sslscan \
     # Web inspection
-    httpie \
+    httpie ruby \
     # Network diagnostics
     traceroute mtr-tiny iputils-ping iproute2 \
     # Build dependencies (for some Python packages)

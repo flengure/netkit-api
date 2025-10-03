@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "tests/gemini_tests.md",
+                "file": "README.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "gemini_tests"
+              "title": "README"
             }
           }
         ]
@@ -171,11 +171,16 @@
   },
   "active": "2c85ae1de1b237df",
   "lastOpenFiles": [
+    "tests/2025-10-03_TOOL_TESTING.md",
+    "tests/2025-10-03_MCP_FIXES.md",
+    "README.md",
+    "MCP_SETUP.md",
+    "CONFIG.md",
+    "tests/gemini_tests.md",
     "entrypoint.sh",
     "tests/SSH_BUG_FIX.md",
     "test_ssh_mcp.py",
     "tests/CLAUDE_CODE_NOTES.md",
-    "tests/gemini_tests.md",
     "notes"
   ]
 }

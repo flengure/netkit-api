@@ -14,6 +14,8 @@ build/
 # IDE
 .vscode/
 .idea/
+.zed/
+.obsidian/
 *.swp
 *.swo
 *~
@@ -30,6 +32,7 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+tests/
 
 # Logs
 *.log
