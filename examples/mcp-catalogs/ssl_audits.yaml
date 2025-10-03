@@ -1,0 +1,359 @@
+# SSL/TLS Audit Tools for netkit-api
+# Certificate validation and cipher testing workflows
+#
+# Installation: Copy to ~/.mcp/catalogs/ssl_audits.yaml
+# Authentication: export NETKIT_TOKEN="your-bearer-token"
+
+# =========================
+# 1) ssl_comprehensive_audit
+# =========================
+ssl_comprehensive_audit:
+  type: stdio
+  description: >
+    Complete SSL/TLS security assessment using testssl.sh. Checks certificate,
+    protocols, ciphers, vulnerabilities (BEAST, POODLE, Heartbleed, etc.).
+    Comprehensive but takes 2-5 minutes.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      HOST="{{host}}"
+      PORT="{{port|default(443)}}"
+
+      # Run testssl.sh with JSON output
+      RESULT=$(netkit_exec '{
+        "tool": "testssl",
+        "args": ["--jsonfile-pretty", "/dev/stdout", "'"$HOST"':'"$PORT"'"],
+        "timeout": 300
+      }' | jq -r '.stdout // "{}"')
+
+      # Parse and summarize
+      echo "$RESULT" | jq '{
+        host: "'"$HOST"':'"$PORT"'",
+        certificate: {
+          subject: (.[] | select(.id == "cert_subject") | .finding // ""),
+          issuer: (.[] | select(.id == "cert_issuer") | .finding // ""),
+          not_after: (.[] | select(.id == "cert_notAfter") | .finding // ""),
+          trust: (.[] | select(.id == "cert_trust") | .severity // "")
+        },
+        protocols: {
+          tls13: (.[] | select(.id == "TLS1_3") | .finding // "not tested"),
+          tls12: (.[] | select(.id == "TLS1_2") | .finding // "not tested"),
+          tls11: (.[] | select(.id == "TLS1_1") | .finding // "not tested"),
+          tls10: (.[] | select(.id == "TLS1") | .finding // "not tested"),
+          ssl3: (.[] | select(.id == "SSLv3") | .finding // "not tested")
+        },
+        vulnerabilities: [
+          .[] | select(.severity == "CRITICAL" or .severity == "HIGH")
+          | {id, finding, severity, cve}
+        ],
+        forward_secrecy: (.[] | select(.id == "PFS") | .finding // ""),
+        hsts: (.[] | select(.id == "HSTS") | .finding // ""),
+        summary: {
+          overall_grade: (.[] | select(.id == "overall_grade") | .finding // ""),
+          critical_issues: ([.[] | select(.severity == "CRITICAL")] | length),
+          high_issues: ([.[] | select(.severity == "HIGH")] | length)
+        }
+      }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "Target hostname (e.g., example.com)"
+      port:
+        type: integer
+        description: "SSL/TLS port (default: 443)"
+    required: [host]
+
+# =========================
+# 2) ssl_certificate_check
+# =========================
+ssl_certificate_check:
+  type: stdio
+  description: >
+    Quick SSL certificate validation: expiration, chain, SANs, key size.
+    Fast check for certificate issues without full cipher testing.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      HOST="{{host}}"
+      PORT="{{port|default(443)}}"
+
+      # Get certificate details
+      CERT_INFO=$(netkit_exec '{
+        "command":"echo | openssl s_client -connect '"$HOST"':'"$PORT"' -servername '"$HOST"' 2>/dev/null | openssl x509 -noout -text"
+      }' | jq -r '.stdout // ""')
+
+      # Get certificate chain
+      CERT_CHAIN=$(netkit_exec '{
+        "command":"echo | openssl s_client -connect '"$HOST"':'"$PORT"' -servername '"$HOST"' -showcerts 2>/dev/null | grep -c '"'"'BEGIN CERTIFICATE'"'"'"
+      }' | jq -r '.stdout // "0"')
+
+      # Parse certificate details
+      SUBJECT=$(echo "$CERT_INFO" | grep "Subject:" | sed 's/.*Subject: //')
+      ISSUER=$(echo "$CERT_INFO" | grep "Issuer:" | sed 's/.*Issuer: //')
+      NOT_BEFORE=$(echo "$CERT_INFO" | grep "Not Before:" | sed 's/.*Not Before: //')
+      NOT_AFTER=$(echo "$CERT_INFO" | grep "Not After :" | sed 's/.*Not After : //')
+      KEY_SIZE=$(echo "$CERT_INFO" | grep "Public-Key:" | sed 's/.*Public-Key: (\([0-9]*\).*/\1/')
+      SANS=$(echo "$CERT_INFO" | grep -A1 "Subject Alternative Name:" | tail -n1 | sed 's/DNS://g' | tr ',' '\n')
+
+      # Calculate days until expiry
+      NOT_AFTER_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$NOT_AFTER" +%s 2>/dev/null || echo "0")
+      NOW_EPOCH=$(date +%s)
+      DAYS_UNTIL_EXPIRY=$(( ($NOT_AFTER_EPOCH - $NOW_EPOCH) / 86400 ))
+
+      # Output
+      jq -n \
+        --arg host "$HOST:$PORT" \
+        --arg subject "$SUBJECT" \
+        --arg issuer "$ISSUER" \
+        --arg not_before "$NOT_BEFORE" \
+        --arg not_after "$NOT_AFTER" \
+        --arg key_size "$KEY_SIZE" \
+        --arg sans "$SANS" \
+        --arg chain_depth "$CERT_CHAIN" \
+        --arg days_until_expiry "$DAYS_UNTIL_EXPIRY" \
+        '{
+          host: $host,
+          certificate: {
+            subject: $subject,
+            issuer: $issuer,
+            validity: {
+              not_before: $not_before,
+              not_after: $not_after,
+              days_until_expiry: ($days_until_expiry | tonumber)
+            },
+            key_size: ($key_size | tonumber),
+            san_entries: ($sans | split("\n") | map(select(length > 0))),
+            chain_depth: ($chain_depth | tonumber)
+          },
+          health: {
+            status: (
+              if ($days_until_expiry | tonumber) < 0 then "EXPIRED"
+              elif ($days_until_expiry | tonumber) < 7 then "EXPIRING_SOON"
+              elif ($days_until_expiry | tonumber) < 30 then "EXPIRING_WITHIN_MONTH"
+              elif ($key_size | tonumber) < 2048 then "WEAK_KEY"
+              else "HEALTHY"
+              end
+            ),
+            issues: [
+              (if ($days_until_expiry | tonumber) < 30 then "Certificate expires in less than 30 days" else empty end),
+              (if ($key_size | tonumber) < 2048 then "Key size is less than 2048 bits (weak)" else empty end),
+              (if ($chain_depth | tonumber) < 2 then "Certificate chain may be incomplete" else empty end)
+            ]
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "Target hostname"
+      port:
+        type: integer
+        description: "SSL/TLS port (default: 443)"
+    required: [host]
+
+# =========================
+# 3) ssl_cipher_strength
+# =========================
+ssl_cipher_strength:
+  type: stdio
+  description: >
+    Test SSL/TLS cipher suite strength using sslscan. Identifies weak ciphers,
+    insecure protocols, and recommended configurations.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      HOST="{{host}}"
+      PORT="{{port|default(443)}}"
+
+      # Run sslscan
+      RESULT=$(netkit_exec '{
+        "tool": "sslscan",
+        "args": ["--no-failed", "'"$HOST"':'"$PORT"'"],
+        "timeout": 120
+      }' | jq -r '.stdout // ""')
+
+      # Parse results
+      ACCEPTED_CIPHERS=$(echo "$RESULT" | grep "Accepted" | awk '{print $2, $3, $NF}')
+      WEAK_CIPHERS=$(echo "$RESULT" | grep "Accepted" | grep -iE "(RC4|DES|MD5|NULL|EXPORT|anon)" || echo "")
+      PROTOCOLS=$(echo "$RESULT" | grep -E "(SSLv2|SSLv3|TLSv1\.[0-3])" | grep -v "disabled")
+
+      # Count cipher strengths
+      STRONG=$(echo "$ACCEPTED_CIPHERS" | grep -c "256 bits" || echo "0")
+      MEDIUM=$(echo "$ACCEPTED_CIPHERS" | grep -c "128 bits" || echo "0")
+      WEAK=$(echo "$WEAK_CIPHERS" | wc -l | tr -d ' ')
+
+      # Output
+      jq -n \
+        --arg host "$HOST:$PORT" \
+        --arg ciphers "$ACCEPTED_CIPHERS" \
+        --arg weak "$WEAK_CIPHERS" \
+        --arg protocols "$PROTOCOLS" \
+        --arg strong "$STRONG" \
+        --arg medium "$MEDIUM" \
+        --arg weak_count "$WEAK" \
+        '{
+          host: $host,
+          accepted_ciphers: ($ciphers | split("\n") | map(select(length > 0))),
+          weak_ciphers: ($weak | split("\n") | map(select(length > 0))),
+          protocols: ($protocols | split("\n") | map(select(length > 0))),
+          cipher_strength: {
+            strong_256bit: ($strong | tonumber),
+            medium_128bit: ($medium | tonumber),
+            weak: ($weak_count | tonumber)
+          },
+          recommendations: [
+            (if ($weak_count | tonumber) > 0 then "Disable weak ciphers (RC4, DES, MD5)" else empty end),
+            (if ($protocols | contains("SSLv2") or contains("SSLv3")) then "Disable SSLv2 and SSLv3" else empty end),
+            (if ($protocols | contains("TLSv1.0")) then "Consider disabling TLS 1.0 (deprecated)" else empty end),
+            "Enable TLS 1.3 for best security",
+            "Configure cipher suite order preference"
+          ],
+          summary: {
+            security_level: (
+              if ($weak_count | tonumber) > 0 then "WEAK"
+              elif ($strong | tonumber) == 0 then "MEDIUM"
+              else "STRONG"
+              end
+            )
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "Target hostname"
+      port:
+        type: integer
+        description: "SSL/TLS port (default: 443)"
+    required: [host]
+
+# =========================
+# 4) ssl_vulnerability_scan
+# =========================
+ssl_vulnerability_scan:
+  type: stdio
+  description: >
+    Rapid check for common SSL/TLS vulnerabilities: Heartbleed, POODLE, BEAST,
+    CRIME, BREACH, ROBOT. Uses testssl.sh --fast mode for quick assessment.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      HOST="{{host}}"
+      PORT="{{port|default(443)}}"
+
+      # Quick vulnerability scan
+      RESULT=$(netkit_exec '{
+        "tool": "testssl",
+        "args": ["--fast", "--jsonfile-pretty", "/dev/stdout", "'"$HOST"':'"$PORT"'"],
+        "timeout": 180
+      }' | jq -r '.stdout // "[]"')
+
+      # Extract vulnerability findings
+      echo "$RESULT" | jq '[
+        .[] | select(.id | test("heartbleed|POODLE|BEAST|CRIME|BREACH|ROBOT|LUCKY13|FREAK|LOGJAM"; "i"))
+        | {
+            vulnerability: .id,
+            status: .finding,
+            severity: .severity,
+            cve: .cve,
+            description: (
+              if .id == "heartbleed" then "OpenSSL Heartbleed vulnerability (CVE-2014-0160)"
+              elif .id == "POODLE_SSL" then "POODLE attack on SSL 3.0 (CVE-2014-3566)"
+              elif .id == "BEAST" then "BEAST attack on TLS 1.0 (CVE-2011-3389)"
+              elif .id == "CRIME_TLS" then "CRIME attack on TLS compression (CVE-2012-4929)"
+              elif .id == "BREACH" then "BREACH attack on HTTP compression"
+              elif .id == "ROBOT" then "ROBOT attack on RSA PKCS#1 v1.5"
+              elif .id == "LUCKY13" then "Lucky Thirteen timing attack"
+              elif .id == "FREAK" then "FREAK attack (CVE-2015-0204)"
+              elif .id == "LOGJAM" then "Logjam attack (CVE-2015-4000)"
+              else ""
+              end
+            )
+          }
+      ] | {
+        host: "'"$HOST"':'"$PORT"'",
+        vulnerabilities: .,
+        summary: {
+          total_tested: (. | length),
+          vulnerable: ([.[] | select(.severity == "CRITICAL" or .severity == "HIGH")] | length),
+          medium_risk: ([.[] | select(.severity == "MEDIUM")] | length),
+          secure: ([.[] | select(.severity == "OK" or .severity == "INFO")] | length)
+        },
+        risk_level: (
+          if ([.[] | select(.severity == "CRITICAL")] | length) > 0 then "CRITICAL"
+          elif ([.[] | select(.severity == "HIGH")] | length) > 0 then "HIGH"
+          elif ([.[] | select(.severity == "MEDIUM")] | length) > 0 then "MEDIUM"
+          else "LOW"
+          end
+        )
+      }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "Target hostname"
+      port:
+        type: integer
+        description: "SSL/TLS port (default: 443)"
+    required: [host]

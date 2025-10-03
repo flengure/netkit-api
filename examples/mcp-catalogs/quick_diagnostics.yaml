@@ -1,0 +1,318 @@
+# Quick Diagnostic Tools for netkit-api
+# Common troubleshooting workflows for rapid problem diagnosis
+#
+# Installation: Copy to ~/.mcp/catalogs/quick_diagnostics.yaml
+# Authentication: export NETKIT_TOKEN="your-bearer-token"
+
+# =========================
+# 1) dns_full_check
+# =========================
+dns_full_check:
+  type: stdio
+  description: >
+    Complete DNS analysis for a domain: A, AAAA, MX, TXT, NS records plus
+    DNS propagation check across multiple resolvers. Returns unified JSON.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      DOMAIN="{{domain}}"
+
+      # Query all record types
+      A=$(netkit_exec '{"command":"dig +short A '"$DOMAIN"'"}' | jq -r '.stdout // ""')
+      AAAA=$(netkit_exec '{"command":"dig +short AAAA '"$DOMAIN"'"}' | jq -r '.stdout // ""')
+      MX=$(netkit_exec '{"command":"dig +short MX '"$DOMAIN"'"}' | jq -r '.stdout // ""')
+      TXT=$(netkit_exec '{"command":"dig +short TXT '"$DOMAIN"'"}' | jq -r '.stdout // ""')
+      NS=$(netkit_exec '{"command":"dig +short NS '"$DOMAIN"'"}' | jq -r '.stdout // ""')
+      SOA=$(netkit_exec '{"command":"dig +short SOA '"$DOMAIN"'"}' | jq -r '.stdout // ""')
+
+      # Check DNSSEC
+      DNSSEC=$(netkit_exec '{"command":"dig +dnssec '"$DOMAIN"' | grep -q RRSIG && echo enabled || echo disabled"}' | jq -r '.stdout // "unknown"')
+
+      # Output structured JSON
+      jq -n \
+        --arg domain "$DOMAIN" \
+        --arg a "$A" \
+        --arg aaaa "$AAAA" \
+        --arg mx "$MX" \
+        --arg txt "$TXT" \
+        --arg ns "$NS" \
+        --arg soa "$SOA" \
+        --arg dnssec "$DNSSEC" \
+        '{
+          domain: $domain,
+          records: {
+            A: ($a | split("\n") | map(select(length > 0))),
+            AAAA: ($aaaa | split("\n") | map(select(length > 0))),
+            MX: ($mx | split("\n") | map(select(length > 0))),
+            TXT: ($txt | split("\n") | map(select(length > 0))),
+            NS: ($ns | split("\n") | map(select(length > 0))),
+            SOA: ($soa | split("\n") | map(select(length > 0)))
+          },
+          dnssec: $dnssec,
+          summary: {
+            ipv4_configured: (($a | length) > 0),
+            ipv6_configured: (($aaaa | length) > 0),
+            mail_configured: (($mx | length) > 0),
+            nameservers_count: (($ns | split("\n") | map(select(length > 0))) | length)
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      domain:
+        type: string
+        description: "Domain name to analyze (e.g., example.com)"
+    required: [domain]
+
+# =========================
+# 2) web_health_check
+# =========================
+web_health_check:
+  type: stdio
+  description: >
+    HTTP/HTTPS connectivity and SSL analysis. Checks response codes, redirects,
+    SSL certificate validity, and basic security headers.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      URL="{{url}}"
+
+      # HTTP connectivity test
+      HTTP_RESPONSE=$(netkit_exec '{
+        "command":"curl -sS -o /dev/null -w '"'"'%{http_code}|%{redirect_url}|%{time_total}'"'"' -L '"$URL"'"
+      }' | jq -r '.stdout // "000||0"')
+
+      IFS='|' read -r CODE REDIRECT TIME <<< "$HTTP_RESPONSE"
+
+      # SSL certificate check (if HTTPS)
+      SSL_DATA="{}"
+      if [[ "$URL" =~ ^https:// ]]; then
+        HOST=$(echo "$URL" | sed -E 's|^https://([^/:]+).*|\1|')
+        SSL_CERT=$(netkit_exec '{
+          "command":"echo | openssl s_client -connect '"$HOST"':443 -servername '"$HOST"' 2>/dev/null | openssl x509 -noout -dates -subject -issuer"
+        }' | jq -r '.stdout // ""')
+
+        SSL_DATA=$(echo "$SSL_CERT" | jq -R -s '{
+          subject: (match("subject=(.*)") | .captures[0].string // ""),
+          issuer: (match("issuer=(.*)") | .captures[0].string // ""),
+          not_before: (match("notBefore=(.*)") | .captures[0].string // ""),
+          not_after: (match("notAfter=(.*)") | .captures[0].string // "")
+        }')
+      fi
+
+      # Security headers check
+      HEADERS=$(netkit_exec '{
+        "command":"curl -sS -I '"$URL"' | grep -iE '"'"'(strict-transport|x-frame|x-content-type|x-xss-protection)'"'"'"
+      }' | jq -r '.stdout // ""')
+
+      # Output
+      jq -n \
+        --arg url "$URL" \
+        --arg code "$CODE" \
+        --arg redirect "$REDIRECT" \
+        --arg time "$TIME" \
+        --argjson ssl "$SSL_DATA" \
+        --arg headers "$HEADERS" \
+        '{
+          url: $url,
+          http: {
+            status_code: ($code | tonumber),
+            redirect_url: $redirect,
+            response_time: ($time | tonumber),
+            status: (if ($code | tonumber) < 400 then "healthy" else "error" end)
+          },
+          ssl: $ssl,
+          security_headers: ($headers | split("\n") | map(select(length > 0))),
+          summary: {
+            accessible: (($code | tonumber) >= 200 and ($code | tonumber) < 400),
+            has_ssl: (($url | startswith("https"))),
+            has_security_headers: (($headers | length) > 0)
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      url:
+        type: string
+        description: "Full URL to test (e.g., https://example.com)"
+    required: [url]
+
+# =========================
+# 3) network_path_check
+# =========================
+network_path_check:
+  type: stdio
+  description: >
+    Combined traceroute and MTR analysis to diagnose network path issues.
+    Identifies routing problems, packet loss, and latency.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      HOST="{{host}}"
+      HOPS="{{max_hops|default(30)}}"
+
+      # Traceroute
+      TRACEROUTE=$(netkit_exec '{
+        "command":"traceroute -m '"$HOPS"' -n '"$HOST"'"
+      }' | jq -r '.stdout // ""')
+
+      # MTR (report mode)
+      MTR=$(netkit_exec '{
+        "command":"mtr -r -c 10 -n '"$HOST"'"
+      }' | jq -r '.stdout // ""')
+
+      # Parse MTR output for packet loss and latency
+      MTR_ANALYSIS=$(echo "$MTR" | awk '
+        /^ *[0-9]+\./ {
+          hop=$1; ip=$2; loss=$3; avg=$6;
+          gsub(/%/, "", loss);
+          printf("{\"hop\":%s,\"ip\":\"%s\",\"loss\":%s,\"avg_ms\":%s}\n", hop, ip, loss, avg);
+        }' | jq -s '.')
+
+      # Output
+      jq -n \
+        --arg host "$HOST" \
+        --arg traceroute "$TRACEROUTE" \
+        --argjson mtr "$MTR_ANALYSIS" \
+        '{
+          host: $host,
+          traceroute: ($traceroute | split("\n")),
+          mtr_report: $mtr,
+          analysis: {
+            total_hops: ($mtr | length),
+            packet_loss: ($mtr | map(.loss) | add / length),
+            avg_latency: ($mtr | map(.avg_ms) | add / length),
+            problematic_hops: ($mtr | map(select(.loss > 5)) | length)
+          },
+          summary: {
+            path_stable: (($mtr | map(.loss) | max) < 10),
+            latency_acceptable: (($mtr | map(.avg_ms) | max) < 200),
+            note: "Packet loss >5% or latency >200ms indicates network issues"
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "Target host (FQDN or IP)"
+      max_hops:
+        type: integer
+        description: "Maximum number of hops (default: 30)"
+    required: [host]
+
+# =========================
+# 4) port_connectivity_check
+# =========================
+port_connectivity_check:
+  type: stdio
+  description: >
+    Quick TCP/UDP port connectivity test using netcat. Useful for verifying
+    firewall rules and service availability without full port scanning.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      HOST="{{host}}"
+      PORTS="{{ports}}"
+      PROTO="{{protocol|default(tcp)}}"
+
+      # Test each port
+      RESULTS="[]"
+      IFS=',' read -ra PORT_ARRAY <<< "$PORTS"
+      for PORT in "${PORT_ARRAY[@]}"; do
+        RESULT=$(netkit_exec '{
+          "command":"timeout 3 nc -v'"$([ "$PROTO" = "udp" ] && echo "u")"' -z '"$HOST"' '"$PORT"' 2>&1 && echo OPEN || echo CLOSED"
+        }' | jq -r '.stdout // "UNKNOWN"')
+
+        STATUS=$(echo "$RESULT" | grep -q "OPEN" && echo "open" || echo "closed")
+
+        RESULTS=$(echo "$RESULTS" | jq -c '. + [{
+          port: ('"$PORT"' | tonumber),
+          protocol: "'"$PROTO"'",
+          status: "'"$STATUS"'"
+        }]')
+      done
+
+      # Output
+      jq -n \
+        --arg host "$HOST" \
+        --argjson results "$RESULTS" \
+        '{
+          host: $host,
+          results: $results,
+          summary: {
+            total_tested: ($results | length),
+            open: ($results | map(select(.status == "open")) | length),
+            closed: ($results | map(select(.status == "closed")) | length)
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "Target host"
+      ports:
+        type: string
+        description: "Comma-separated ports (e.g., 22,80,443)"
+      protocol:
+        type: string
+        enum: [tcp, udp]
+        description: "Protocol to test (default: tcp)"
+    required: [host, ports]

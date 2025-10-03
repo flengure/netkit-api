@@ -1,0 +1,386 @@
+# Security Audit Tools for netkit-api
+# Complex workflows for security assessment and vulnerability analysis
+#
+# Installation: Copy to ~/.mcp/catalogs/security_audits.yaml
+# Authentication: export NETKIT_TOKEN="your-bearer-token"
+# Usage: Available as MCP tools in Claude Desktop
+
+# =========================
+# 1) exposure_audit
+# =========================
+exposure_audit:
+  type: stdio
+  description: >
+    External exposure audit for a host (IPv4/IPv6): resolves DNS, runs TCP+UDP
+    reachability scans with safe timing, parses into JSON (open/filtered/closed),
+    and summarizes intended vs unexpected exposure. Built for LLM reasoning.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      # Configuration
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN environment variable required}"
+
+      # Helper function
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      # Parameters (with defaults)
+      HOST="{{host}}"
+      TCP_PORTS="{{tcp_ports|default(1-65535)}}"
+      UDP_PORTS="{{udp_ports|default(1-1024)}}"
+      MIN_RATE="{{min_rate|default(1500)}}"
+
+      # Validate host input
+      if [[ ! "$HOST" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+        echo '{"error":"Invalid host format","host":"'"$HOST"'"}' >&2
+        exit 1
+      fi
+
+      # Step 1: Resolve DNS
+      IPV4=$(netkit_exec '{"command":"dig +short A '"$HOST"'"}' | jq -r '.stdout // empty' | head -n1)
+      IPV6=$(netkit_exec '{"command":"dig +short AAAA '"$HOST"'"}' | jq -r '.stdout // empty' | head -n1)
+
+      if [[ -z "$IPV4" && -z "$IPV6" ]]; then
+        echo '{"error":"DNS resolution failed","host":"'"$HOST"'"}' >&2
+        exit 1
+      fi
+
+      # Step 2: TCP Scan (IPv4)
+      TCP_V4_RESULT=""
+      if [[ -n "$IPV4" ]]; then
+        TCP_V4_RESULT=$(netkit_exec '{
+          "tool": "nmap",
+          "args": ["-Pn", "-sS", "-p'"$TCP_PORTS"'", "--min-rate", "'"$MIN_RATE"'", "-T4", "'"$IPV4"'", "-oG", "-"]
+        }' | jq -r '.stdout // empty')
+      fi
+
+      # Step 3: TCP Scan (IPv6)
+      TCP_V6_RESULT=""
+      if [[ -n "$IPV6" ]]; then
+        TCP_V6_RESULT=$(netkit_exec '{
+          "tool": "nmap",
+          "args": ["-Pn", "-sS", "-6", "-p'"$TCP_PORTS"'", "--min-rate", "'"$MIN_RATE"'", "-T4", "'"$IPV6"'", "-oG", "-"]
+        }' | jq -r '.stdout // empty')
+      fi
+
+      # Step 4: UDP Scan (IPv4 - top ports only for speed)
+      UDP_V4_RESULT=""
+      if [[ -n "$IPV4" ]]; then
+        UDP_V4_RESULT=$(netkit_exec '{
+          "tool": "nmap",
+          "args": ["-Pn", "-sU", "-p'"$UDP_PORTS"'", "--min-rate", "'"$MIN_RATE"'", "-T4", "'"$IPV4"'", "-oG", "-"]
+        }' | jq -r '.stdout // empty')
+      fi
+
+      # Step 5: Parse results into JSON
+      parse_nmap_grepable() {
+        local input="$1"
+        local proto="$2"
+        local ip="$3"
+
+        echo "$input" | awk -v proto="$proto" -v ip="$ip" '
+          /Ports:/ {
+            gsub(/\r/, "");
+            match($0, /Ports: (.*)/, ports);
+            if (ports[1]) {
+              split(ports[1], arr, ",");
+              for (i in arr) {
+                gsub(/^ +| +$/, "", arr[i]);
+                split(arr[i], fields, "/");
+                if (length(fields) >= 5) {
+                  printf("{\"ip\":\"%s\",\"proto\":\"%s\",\"port\":%s,\"state\":\"%s\",\"service\":\"%s\"}\n",
+                    ip, proto, fields[1], fields[2], fields[5]);
+                }
+              }
+            }
+          }'
+      }
+
+      # Combine all results
+      {
+        parse_nmap_grepable "$TCP_V4_RESULT" "tcp" "$IPV4"
+        parse_nmap_grepable "$TCP_V6_RESULT" "tcp" "$IPV6"
+        parse_nmap_grepable "$UDP_V4_RESULT" "udp" "$IPV4"
+      } | jq -s '
+        group_by(.ip) | map({
+          ip: .[0].ip,
+          tcp: [.[] | select(.proto == "tcp") | {port, state, service}],
+          udp: [.[] | select(.proto == "udp") | {port, state, service}]
+        }) | {
+          host: "'"$HOST"'",
+          ipv4: "'"$IPV4"'",
+          ipv6: "'"$IPV6"'",
+          grouped: .,
+          summary: {
+            tcp_open: [.[] | .tcp[] | select(.state == "open") | .port] | unique | sort,
+            udp_open: [.[] | .udp[] | select(.state == "open" or .state == "open|filtered") | .port] | unique | sort,
+            total_open: ([.[] | .tcp[], .udp[] | select(.state == "open" or .state == "open|filtered")] | length)
+          },
+          advice: {
+            note: "Review all open ports against your infrastructure policy. Only intended services should be exposed.",
+            risk_factors: [
+              "Unexpected open ports may indicate misconfiguration or compromise",
+              "UDP open|filtered states require deeper investigation",
+              "Services on non-standard ports should be verified"
+            ]
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "FQDN or IP address (e.g., example.com or 192.0.2.1)"
+      tcp_ports:
+        type: string
+        description: "TCP port range in nmap format (default: 1-65535)"
+      udp_ports:
+        type: string
+        description: "UDP port range in nmap format (default: 1-1024)"
+      min_rate:
+        type: integer
+        description: "Minimum packet rate for nmap (default: 1500)"
+    required: [host]
+  output_schema:
+    type: object
+    properties:
+      host: {type: string}
+      ipv4: {type: string}
+      ipv6: {type: string}
+      grouped: {type: array}
+      summary: {type: object}
+      advice: {type: object}
+
+# =========================
+# 2) service_fingerprint_vulns
+# =========================
+service_fingerprint_vulns:
+  type: stdio
+  description: >
+    Service version detection and CVE lookup. Given a host and open TCP ports,
+    performs deep service fingerprinting (-sV -sC) and queries OSV vulnerability
+    database for known CVEs. Returns structured JSON with service details and
+    security advisories.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      HOST="{{host}}"
+      PORTS="{{ports}}"
+
+      # Resolve IP
+      IP=$(netkit_exec '{"command":"dig +short A '"$HOST"'"}' | jq -r '.stdout // empty' | head -n1)
+      IP="${IP:-$HOST}"
+
+      # Service fingerprinting
+      SCAN_XML=$(netkit_exec '{
+        "tool": "nmap",
+        "args": ["-Pn", "-sV", "-sC", "-p'"$PORTS"'", "'"$IP"'", "-oX", "-"],
+        "timeout": 300
+      }' | jq -r '.stdout // empty')
+
+      # Parse services
+      SERVICES=$(echo "$SCAN_XML" | xmllint --xpath "//service[@product]" - 2>/dev/null | \
+        sed 's/<service /\n<service /g' | grep '^<service' | \
+        sed -E 's/.*product="([^"]*)".*version="([^"]*)".*/\1 \2/' | sort -u || echo "")
+
+      # Query OSV for each service
+      OSV_RESULTS="[]"
+      if [[ -n "$SERVICES" ]]; then
+        OSV_RESULTS=$(echo "$SERVICES" | while IFS= read -r svc; do
+          [[ -z "$svc" ]] && continue
+          curl -sS "https://api.osv.dev/v1/query" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"'"$svc"'"}' | \
+            jq -c '{query: "'"$svc"'", result: .}'
+        done | jq -s '.')
+      fi
+
+      # Output combined JSON
+      echo "$SCAN_XML" | xmllint --format - 2>/dev/null | \
+        xq -c '.nmaprun.host.ports.port | (if type == "array" then . else [.] end) | map({
+          port: (."@port" | tonumber),
+          protocol: ."@protocol",
+          state: .state."@state",
+          service: {
+            name: .service."@name",
+            product: .service."@product",
+            version: .service."@version",
+            extrainfo: .service."@extrainfo",
+            ostype: .service."@ostype"
+          }
+        })' | jq -c --argjson osv "$OSV_RESULTS" '{
+          host: "'"$HOST"'",
+          ip: "'"$IP"'",
+          services: .,
+          vulnerabilities: $osv,
+          summary: {
+            total_services: (. | length),
+            identified: ([.[] | select(.service.product != null)] | length),
+            with_cves: ($osv | map(select(.result.vulns != null)) | length)
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "Target host (FQDN or IP)"
+      ports:
+        type: string
+        description: "Comma-separated TCP ports (e.g., 22,80,443,3306)"
+    required: [host, ports]
+  output_schema:
+    type: object
+    properties:
+      host: {type: string}
+      ip: {type: string}
+      services: {type: array}
+      vulnerabilities: {type: array}
+      summary: {type: object}
+
+# =========================
+# 3) edge_stack_audit
+# =========================
+edge_stack_audit:
+  type: stdio
+  description: >
+    Hybrid external/internal edge security audit. Combines external port scanning
+    with internal firewall/proxy configuration analysis. Useful for diagnosing
+    unexpected exposure caused by Docker, firewalls, or reverse proxies.
+
+    Note: Internal inspection requires SSH access to target host.
+  command: "bash"
+  args:
+    - "-c"
+    - |
+      #!/bin/bash
+      set -euo pipefail
+
+      NETKIT_URL="${NETKIT_URL:-https://netkit.tomage.net}"
+      NETKIT_TOKEN="${NETKIT_TOKEN:?NETKIT_TOKEN required}"
+
+      netkit_exec() {
+        curl -sS -X POST "$NETKIT_URL/exec" \
+          -H "Authorization: Bearer $NETKIT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$1"
+      }
+
+      HOST="{{host}}"
+      SCAN_SSH="{{scan_ssh|default(false)}}"
+
+      # Resolve IP
+      IP=$(netkit_exec '{"command":"dig +short A '"$HOST"'"}' | jq -r '.stdout // empty' | head -n1)
+
+      # External quick scan (top 1000 TCP ports)
+      EXT_SCAN=$(netkit_exec '{
+        "tool": "nmap",
+        "args": ["-Pn", "-sS", "--top-ports", "1000", "-T4", "'"$IP"'", "-oG", "-"]
+      }' | jq -r '.stdout // empty')
+
+      EXT_OPEN=$(echo "$EXT_SCAN" | awk '/Ports:/{print}' | \
+        awk 'BEGIN{FS="Ports: "} /Ports:/{print $2}' | tr ',' '\n' | \
+        awk -F'/' '{if($2=="open") print $1}' | sort -n | jq -R . | jq -s .)
+
+      # Internal inspection (if SSH enabled)
+      INTERNAL_DATA="{}"
+      if [[ "$SCAN_SSH" == "true" ]]; then
+        # UFW status
+        UFW=$(netkit_exec '{
+          "tool": "ssh",
+          "host": "'"$HOST"'",
+          "command": "sudo ufw status numbered"
+        }' | jq -r '.stdout // "unavailable"' 2>/dev/null || echo "unavailable")
+
+        # Docker published ports
+        DOCKER_PS=$(netkit_exec '{
+          "tool": "ssh",
+          "host": "'"$HOST"'",
+          "command": "docker ps --format json"
+        }' | jq -r '.stdout // "[]"' 2>/dev/null || echo "[]")
+
+        # DOCKER-USER iptables chain
+        DOCKER_USER=$(netkit_exec '{
+          "tool": "ssh",
+          "host": "'"$HOST"'",
+          "command": "sudo iptables -S DOCKER-USER"
+        }' | jq -r '.stdout // "unavailable"' 2>/dev/null || echo "unavailable")
+
+        # Listening sockets
+        LISTEN=$(netkit_exec '{
+          "tool": "ssh",
+          "host": "'"$HOST"'",
+          "command": "ss -ltnup"
+        }' | jq -r '.stdout // "unavailable"' 2>/dev/null || echo "unavailable")
+
+        INTERNAL_DATA=$(jq -n \
+          --arg ufw "$UFW" \
+          --arg docker "$DOCKER_PS" \
+          --arg dockeruser "$DOCKER_USER" \
+          --arg listen "$LISTEN" \
+          '{ufw: $ufw, docker_containers: $docker, docker_user_chain: $dockeruser, listening_sockets: $listen}')
+      fi
+
+      # Output combined analysis
+      jq -n \
+        --arg host "$HOST" \
+        --arg ip "$IP" \
+        --argjson ext "$EXT_OPEN" \
+        --argjson internal "$INTERNAL_DATA" \
+        '{
+          host: $host,
+          ip: $ip,
+          external_open_ports: $ext,
+          internal: $internal,
+          analysis: {
+            exposure_count: ($ext | length),
+            has_internal_data: ($internal | length > 0),
+            recommendations: [
+              "Compare external_open_ports with your intended exposure",
+              "Check Docker containers for unexpected published ports",
+              "Verify UFW rules match security policy",
+              "Review DOCKER-USER chain for bypass rules"
+            ]
+          }
+        }'
+  input_schema:
+    type: object
+    properties:
+      host:
+        type: string
+        description: "Target host to audit"
+      scan_ssh:
+        type: boolean
+        description: "Enable internal inspection via SSH (requires SSH keys configured)"
+    required: [host]
+  output_schema:
+    type: object
+    properties:
+      host: {type: string}
+      ip: {type: string}
+      external_open_ports: {type: array}
+      internal: {type: object}
+      analysis: {type: object}
