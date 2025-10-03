@@ -5,6 +5,19 @@
 FastAPI-based HTTP/MCP API for network diagnostics, scanning, and security auditing.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docker Pulls](https://img.shields.io/docker/pulls/flengure/netkit-api)](https://hub.docker.com/r/flengure/netkit-api)
+
+## Installation
+
+```bash
+# Docker (recommended)
+docker pull flengure/netkit-api:latest
+
+# Or from source
+git clone https://github.com/flengure/netkit-api.git
+cd netkit-api
+docker build -t netkit-api .
+```
 
 ## Features
 
