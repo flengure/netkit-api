@@ -12,7 +12,7 @@ import subprocess
 import time
 import shlex
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any
 from abc import ABC
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class BaseExecutor(ABC):
         except Exception:
             return False
 
-    def validate_timeout(self, timeout: Optional[int]) -> int:
+    def validate_timeout(self, timeout: int | None) -> int:
         """Validate and return timeout value"""
         if timeout is None:
             return self.DEFAULT_TIMEOUT
@@ -68,7 +68,7 @@ class BaseExecutor(ABC):
             raise ValueError(f"Timeout cannot exceed {self.MAX_TIMEOUT} seconds")
         return timeout
 
-    def validate_args(self, args: List[str]) -> None:
+    def validate_args(self, args: list[str]) -> None:
         """
         Validate arguments for dangerous patterns
 
@@ -84,7 +84,7 @@ class BaseExecutor(ABC):
                 if pattern in arg_str:
                     raise ValueError(f"Dangerous pattern '{pattern}' not allowed in arguments")
 
-    def build_command(self, params: Dict[str, Any]) -> List[str]:
+    def build_command(self, params: dict[str, Any]) -> list[str]:
         """
         Build command from parameters
 
@@ -121,7 +121,7 @@ class BaseExecutor(ABC):
         # Build final command
         return [self.TOOL_NAME] + args
 
-    def process_args(self, args: List[str], params: Dict[str, Any]) -> List[str]:
+    def process_args(self, args: list[str], params: dict[str, Any]) -> list[str]:
         """
         Process and modify arguments before execution.
         Override in subclasses for tool-specific logic.
@@ -135,7 +135,7 @@ class BaseExecutor(ABC):
         """
         return args
 
-    def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, params: dict[str, Any]) -> dict[str, Any]:
         """
         Execute tool with parameters
 
