@@ -32,9 +32,9 @@ class BaseExecutor(ABC):
     DEFAULT_TIMEOUT: int = 60
 
     # Dangerous patterns to block in arguments
-    DANGEROUS_PATTERNS = [";", "&&", "||", "|", "`", "$(", "${", ">", "<", "\n", "\r"]
+    DANGEROUS_PATTERNS: list[str] = [";", "&&", "||", "|", "`", "$(", "${", ">", "<", "\n", "\r"]
 
-    def __init__(self, target_validator=None):
+    def __init__(self, target_validator: Any = None):
         """
         Initialize executor
 
