@@ -13,7 +13,7 @@ import time
 import shlex
 import logging
 from typing import Dict, Any, List, Optional
-from abc import ABC, abstractmethod
+from abc import ABC
 
 logger = logging.getLogger(__name__)
 
