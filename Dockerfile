@@ -16,16 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     httpie ruby \
     # Network diagnostics
     traceroute mtr-tiny iputils-ping iproute2 \
-    # Capabilities management for masscan
-    libcap2-bin \
     # Perl dependencies for nikto
     libnet-ssleay-perl libcrypt-ssleay-perl \
     # Build dependencies (for some Python packages)
     gcc python3-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Grant masscan NET_RAW capability for non-root execution
-RUN setcap cap_net_raw+ep /usr/bin/masscan
 
 # Install nikto from GitHub (not in Debian repos)
 RUN curl -L https://github.com/sullo/nikto/archive/2.5.0.tar.gz | \
@@ -64,37 +59,33 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY api/requirements.txt /tmp/requirements.txt
 RUN uv pip install --system --no-cache -r /tmp/requirements.txt
 
-# Copy entrypoint script (as root before user switch)
+# Copy entrypoint script
 COPY entrypoint.sh /usr/local/bin/netkit-api
 RUN chmod +x /usr/local/bin/netkit-api
 
-# Create non-root user
-RUN useradd -m -u 1000 runner
-
-# Create app directory structure as root
-RUN mkdir -p /app/api /app/mcp && chown -R runner:runner /app
-
-# Switch to non-root user
-USER runner
-WORKDIR /home/runner
+# Create app directory structure
+RUN mkdir -p /app/api /app/mcp /root/.ssh
 
 # Copy application code
-COPY --chown=runner:runner base_executor.py /app/
-COPY --chown=runner:runner rate_limiter.py /app/
-COPY --chown=runner:runner target_validator.py /app/
-COPY --chown=runner:runner job_manager.py /app/
-COPY --chown=runner:runner capabilities.py /app/
-COPY --chown=runner:runner config_loader.py /app/
-COPY --chown=runner:runner executors.py /app/
-COPY --chown=runner:runner oidc_validator.py /app/
-COPY --chown=runner:runner api/api.py /app/api/
-COPY --chown=runner:runner mcp/server.py /app/mcp/
+COPY base_executor.py /app/
+COPY rate_limiter.py /app/
+COPY target_validator.py /app/
+COPY job_manager.py /app/
+COPY capabilities.py /app/
+COPY config_loader.py /app/
+COPY executors.py /app/
+COPY oidc_validator.py /app/
+COPY api/api.py /app/api/
+COPY mcp/server.py /app/mcp/
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1 \
     API_PORT=8090 \
-    SSH_DIR=/home/runner/.ssh \
+    SSH_DIR=/root/.ssh \
     PYTHONPATH=/app
+
+# Run as root (container has read_only and cap_add restrictions for security)
+WORKDIR /root
 
 # Expose API port (only used in --http mode)
 EXPOSE 8090
