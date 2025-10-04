@@ -16,6 +16,8 @@ build/
 .idea/
 .zed/
 .obsidian/
+.claude/
+.gemini/
 *.swp
 *.swo
 *~
@@ -32,7 +34,7 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
-tests/
+issues/
 
 # Logs
 *.log
