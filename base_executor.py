@@ -12,8 +12,11 @@ import subprocess
 import time
 import shlex
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, cast
 from abc import ABC
+
+if TYPE_CHECKING:
+    from target_validator import TargetValidator
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +37,9 @@ class BaseExecutor(ABC):
     # Dangerous patterns to block in arguments
     DANGEROUS_PATTERNS: list[str] = [";", "&&", "||", "|", "`", "$(", "${", ">", "<", "\n", "\r"]
 
-    def __init__(self, target_validator: Any = None):
+    target_validator: "TargetValidator | None"
+
+    def __init__(self, target_validator: "TargetValidator | None" = None):
         """
         Initialize executor
 
@@ -85,7 +90,7 @@ class BaseExecutor(ABC):
                 if pattern in arg_str:
                     raise ValueError(f"Dangerous pattern '{pattern}' not allowed in arguments")
 
-    def build_command(self, params: dict[str, Any]) -> list[str]:
+    def build_command(self, params: dict[str, object]) -> list[str]:
         """
         Build command from parameters
 
@@ -95,6 +100,8 @@ class BaseExecutor(ABC):
         Returns:
             List of command arguments including tool name
         """
+        args: list[str]
+
         if "command" in params:
             # Parse command string safely
             command_str = params["command"]
@@ -106,10 +113,10 @@ class BaseExecutor(ABC):
                 raise ValueError(f"Invalid command syntax: {e}")
         elif "args" in params:
             # Use provided argument list
-            args = params["args"]
-            if not isinstance(args, list):
+            args_raw = params["args"]
+            if not isinstance(args_raw, list):
                 raise ValueError("'args' must be a list")
-            args = [str(arg) for arg in args]
+            args = [str(arg) for arg in cast(list[object], args_raw)]
         else:
             raise ValueError("Either 'command' or 'args' required")
 
@@ -123,7 +130,7 @@ class BaseExecutor(ABC):
         assert self.TOOL_NAME is not None  # Validated in __init__
         return [self.TOOL_NAME] + args
 
-    def process_args(self, args: list[str], params: dict[str, Any]) -> list[str]:
+    def process_args(self, args: list[str], params: dict[str, object]) -> list[str]:
         """
         Process and modify arguments before execution.
         Override in subclasses for tool-specific logic.
@@ -135,9 +142,10 @@ class BaseExecutor(ABC):
         Returns:
             Modified argument list
         """
+        _ = params  # May be used by subclasses
         return args
 
-    def execute(self, params: dict[str, Any]) -> dict[str, Any]:
+    def execute(self, params: dict[str, object]) -> dict[str, object]:
         """
         Execute tool with parameters
 
@@ -161,7 +169,8 @@ class BaseExecutor(ABC):
         cmd = self.build_command(params)
 
         # Validate timeout
-        timeout = self.validate_timeout(params.get("timeout", self.DEFAULT_TIMEOUT))
+        timeout_param = params.get("timeout", self.DEFAULT_TIMEOUT)
+        timeout = self.validate_timeout(timeout_param if isinstance(timeout_param, int) else None)
 
         # Log execution
         logger.info(f"Executing: {self.TOOL_NAME} (timeout={timeout}s)")
@@ -182,7 +191,7 @@ class BaseExecutor(ABC):
                 stdout_bytes, stderr_bytes = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.wait()  # Clean up zombie process
+                _ = proc.wait()  # Clean up zombie process
                 duration = round(time.time() - start, 3)
                 logger.warning(f"{self.TOOL_NAME} timed out after {timeout}s")
 
