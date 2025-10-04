@@ -22,8 +22,8 @@ class BaseExecutor(ABC):
     """Base class for all tool executors"""
 
     # Override in subclasses
-    TOOL_NAME: str = None
-    DESCRIPTION: str = None
+    TOOL_NAME: str | None = None
+    DESCRIPTION: str | None = None
     REQUIRES_CAP_NET_RAW: bool = False
 
     # Execution limits
@@ -47,6 +47,7 @@ class BaseExecutor(ABC):
 
     def is_available(self) -> bool:
         """Check if tool is installed and available"""
+        assert self.TOOL_NAME is not None  # Validated in __init__
         try:
             result = subprocess.run(
                 ["which", self.TOOL_NAME],
@@ -119,6 +120,7 @@ class BaseExecutor(ABC):
         args = self.process_args(args, params)
 
         # Build final command
+        assert self.TOOL_NAME is not None  # Validated in __init__
         return [self.TOOL_NAME] + args
 
     def process_args(self, args: list[str], params: dict[str, Any]) -> list[str]:

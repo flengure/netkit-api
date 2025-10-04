@@ -54,8 +54,8 @@ API_KEYS = config.get_list("api_keys", "API_KEYS", [])
 # OIDC Configuration
 OIDC_ENABLED = config.get_bool("oidc_enabled", "OIDC_ENABLED", False)
 OIDC_ISSUER = config.get_string("oidc_issuer", "OIDC_ISSUER", "")
-OIDC_AUDIENCE = config.get_string("oidc_audience", "OIDC_AUDIENCE", None)
-OIDC_JWKS_URI = config.get_string("oidc_jwks_uri", "OIDC_JWKS_URI", None)
+OIDC_AUDIENCE = config.get_string("oidc_audience", "OIDC_AUDIENCE", "")
+OIDC_JWKS_URI = config.get_string("oidc_jwks_uri", "OIDC_JWKS_URI", "")
 OIDC_REQUIRED_SCOPES = config.get_list("oidc_required_scopes", "OIDC_REQUIRED_SCOPES", [])
 
 # Initialize OIDC validator if enabled
@@ -64,8 +64,8 @@ if OIDC_ENABLED and OIDC_ISSUER:
     try:
         oidc_config = OIDCConfig(
             issuer=OIDC_ISSUER,
-            audience=OIDC_AUDIENCE,
-            jwks_uri=OIDC_JWKS_URI,
+            audience=OIDC_AUDIENCE or None,
+            jwks_uri=OIDC_JWKS_URI or None,
             required_scopes=OIDC_REQUIRED_SCOPES if OIDC_REQUIRED_SCOPES else None
         )
         oidc_validator = MultiOIDCValidator([oidc_config])
