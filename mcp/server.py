@@ -88,28 +88,26 @@ def mcp_tools_list(_params: Dict[str, Any]) -> Dict[str, Any]:
 
     for name, executor in TOOL_REGISTRY.items():
         # Build input schema based on tool
+        # Note: Either 'command' or 'args' must be provided (enforced by backend, not schema)
+        # 'oneOf' removed for Zed compatibility - see issues/MCP_schema_compatibility_note.md
         input_schema = {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": f"Command arguments as string (e.g., '{name} arg1 arg2')"
+                    "description": f"Command arguments as string (e.g., '{name} arg1 arg2'). Either 'command' or 'args' must be provided."
                 },
                 "args": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Command arguments as array"
+                    "description": "Command arguments as array. Either 'command' or 'args' must be provided."
                 },
                 "timeout": {
                     "type": "integer",
                     "description": f"Timeout in seconds (default: {executor.DEFAULT_TIMEOUT}, max: {executor.MAX_TIMEOUT})",
                     "default": executor.DEFAULT_TIMEOUT
                 }
-            },
-            "oneOf": [
-                {"required": ["command"]},
-                {"required": ["args"]}
-            ]
+            }
         }
 
         # Add SSH-specific parameters
