@@ -793,19 +793,17 @@ Add to your Claude Desktop config file:
         "-v",
         "/Users/YOUR_USERNAME/.ssh:/home/runner/.ssh:ro",
         "-e",
-        "SSH_DIR=/home/runner/.ssh",
-        "-e",
         "SCAN_WHITELIST=10.0.0.0/8,192.168.0.0/16,*.example.com",
         "-e",
         "SCAN_BLACKLIST=*.internal.corp,*.local",
-        "flengure/netkit-api:latest",
-        "python",
-        "/app/mcp/server.py"
+        "flengure/netkit-api:latest"
       ]
     }
   }
 }
 ```
+
+**Note:** The container defaults to MCP stdio mode, so no command arguments are needed. Use `--http` only if you want HTTP API mode instead.
 
 **⚠️ Important Notes:**
 
@@ -846,9 +844,7 @@ If you only need DNS, HTTP, and security testing tools without advanced scanning
       "args": [
         "run",
         "-i",
-        "flengure/netkit-api:latest",
-        "python",
-        "/app/mcp/server.py"
+        "flengure/netkit-api:latest"
       ]
     }
   }
