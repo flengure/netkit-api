@@ -647,10 +647,39 @@ OIDC_JWKS_URI=https://auth.example.com/jwks  # Optional: auto-discovered if not 
 
 **Rate Limiting**:
 ```bash
-RATE_LIMIT_GLOBAL=100      # requests/min globally
-RATE_LIMIT_PER_IP=20       # requests/min per IP
+RATE_LIMIT_GLOBAL=100      # requests/min globally (all users combined)
+RATE_LIMIT_PER_IP=20       # requests/min per source IP address
 RATE_LIMIT_PER_KEY=50      # requests/min per API key
 ```
+
+Rate limits are enforced on all `/exec` and `/jobs` endpoints. When exceeded, the API returns `429 Too Many Requests`.
+
+**Recommended settings:**
+
+| Deployment | GLOBAL | PER_IP | PER_KEY | Use Case |
+|------------|--------|--------|---------|----------|
+| **Development** | 1000 | 100 | 100 | Local testing |
+| **Internal** | 500 | 50 | 100 | Trusted internal users |
+| **Public (restricted)** | 100 | 10 | 20 | Public with strong auth |
+| **Public (open)** | 50 | 5 | N/A | Public without auth (not recommended) |
+
+**OIDC Scope-Based Restrictions (optional):**
+
+Use `OIDC_REQUIRED_SCOPES` to limit access by tool category:
+```bash
+# Require at least one of these scopes
+OIDC_REQUIRED_SCOPES=netkit.exec.web,netkit.exec.scan,netkit.exec.dns,netkit.exec.all
+
+# Tool categories:
+# - netkit.exec.web: curl, whatweb, nikto, testssl.sh
+# - netkit.exec.scan: nmap, masscan
+# - netkit.exec.dns: dig, host, whois
+# - netkit.exec.network: traceroute, mtr, ping, nc
+# - netkit.exec.ssh: ssh (remote execution)
+# - netkit.exec.all: All tools
+```
+
+Configure these scopes in your OIDC provider to control per-user access.
 
 **Target Validation**:
 ```bash
@@ -668,6 +697,34 @@ JOB_CLEANUP_INTERVAL=3600   # seconds
 **SSH** (for mounted .ssh directory):
 ```bash
 SSH_DIR=/home/runner/.ssh
+```
+
+**Logging**:
+```bash
+LOG_LEVEL=INFO  # Options: DEBUG, INFO, WARNING, ERROR
+```
+
+All logs are written to stdout (12-factor app pattern) for easy container log aggregation.
+
+**Log levels:**
+- **ERROR**: Only errors and failures
+- **WARNING**: Warnings + errors (default)
+- **INFO**: Request logs + warnings + errors
+- **DEBUG**: Full command output + execution details + all above
+
+**Secret Redaction:**
+
+The API automatically redacts sensitive information from logs:
+- API keys are masked (shows first 8 chars + `...`)
+- Command-line passwords are redacted (flags like `-p PASSWORD`, `--password=SECRET`)
+- Environment variables containing `SECRET`, `KEY`, or `PASSWORD` are never logged
+- JWT tokens are not logged
+
+**Example logs:**
+```
+2025-10-04 12:34:56 - INFO - Valid API key authentication (key: 12345678...)
+2025-10-04 12:34:57 - INFO - Tool execution request: dig from 192.168.1.100
+2025-10-04 12:34:57 - INFO - Executing: dig google.com +short (timeout: 30s)
 ```
 
 ### Docker Compose
@@ -699,6 +756,8 @@ services:
 ## MCP Server
 
 netkit-api includes an MCP (Model Context Protocol) server for integration with Claude AI and other AI assistants.
+
+**Ready-to-use configurations:** See [examples/mcp-catalogs](examples/mcp-catalogs/) for pre-configured MCP catalog examples (quick diagnostics, SSL audits, security scans).
 
 ### Quick Start - Command Line
 
