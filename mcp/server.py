@@ -183,8 +183,8 @@ def mcp_tools_call(params: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError(f"Execution failed: {str(e)}")
 
 
-def handle(req: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle incoming JSON-RPC requests"""
+def handle(req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Handle incoming JSON-RPC requests and notifications"""
     if not isinstance(req, dict) or req.get("jsonrpc") != JSONRPC:
         req_id = req.get("id") if isinstance(req, dict) else 0
         if req_id is None:
@@ -193,10 +193,17 @@ def handle(req: Dict[str, Any]) -> Dict[str, Any]:
 
     method = req.get("method")
     _id = req.get("id")
-    if _id is None:
-        _id = 0
     params = req.get("params") or {}
 
+    # Handle notifications (no id field) - these don't get responses
+    if _id is None:
+        # Notifications we recognize but ignore
+        if method in ["notifications/initialized", "notifications/cancelled"]:
+            return None
+        # Unknown notification - ignore silently per JSON-RPC 2.0 spec
+        return None
+
+    # Handle requests (have id field)
     try:
         if method == "initialize":
             return jr(_id, mcp_initialize(params))
@@ -241,7 +248,9 @@ def main():
             continue
 
         resp = handle(req)
-        print(json.dumps(resp, ensure_ascii=False), flush=True)
+        # Only send response for requests, not notifications
+        if resp is not None:
+            print(json.dumps(resp, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":
