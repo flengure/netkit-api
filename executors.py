@@ -17,7 +17,7 @@ class SSHExecutor(BaseExecutor):
     """SSH command execution via OpenSSH client"""
 
     TOOL_NAME = "ssh"
-    DESCRIPTION = "Run commands on remote servers"
+    DESCRIPTION = "Run commands on remote servers. Supports standard SSH syntax, including host aliases that may be defined in a user-provided SSH config file."
     REQUIRES_CAP_NET_RAW = False
 
     # SSH-specific defaults
