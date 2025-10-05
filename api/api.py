@@ -29,11 +29,107 @@ from oidc_validator import OIDCConfig, MultiOIDCValidator
 
 app = FastAPI(
     title="netkit-api",
-    description="Remote operations toolkit - SSH execution + network diagnostics, scanning, and security auditing",
+    description="""
+Remote operations toolkit for network diagnostics, scanning, and security auditing.
+
+## Authentication
+
+Supports three authentication methods (can be enabled simultaneously):
+- **API Key** - Simple key-based auth (X-API-Key header or ApiKey scheme)
+- **JWT** - Shared secret token authentication
+- **OIDC** - OAuth2/OpenID Connect (recommended for production)
+
+## Two-Tier Security Model
+
+**Private Instance (Full Capabilities):**
+- Root user with CAP_NET_RAW + CAP_NET_ADMIN
+- Full toolset: nmap -sS, traceroute, mtr, masscan
+- Internal use only (localhost)
+
+**Public Instance (Safe Mode):**
+- Non-root with no capabilities
+- Safe tools only: nmap -sT, dig, curl, whois
+- For controlled public access
+
+## Rate Limiting
+
+All endpoints are rate-limited per IP, per API key, and globally.
+Exceeding limits returns 429 Too Many Requests.
+""",
     version="2.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    openapi_tags=[
+        {"name": "tools", "description": "Tool execution and discovery"},
+        {"name": "jobs", "description": "Async job management"},
+        {"name": "system", "description": "Health checks and statistics"}
+    ],
+    servers=[
+        {"url": "http://localhost:8090", "description": "Local development"},
+        {"url": "https://api.example.com", "description": "Production"}
+    ]
 )
+
+# Add security schemes to OpenAPI spec
+app.openapi_schema = None  # Reset to regenerate with custom security
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    from fastapi.openapi.utils import get_openapi
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        servers=app.servers,
+        tags=app.openapi_tags
+    )
+
+    # Add security schemes
+    openapi_schema["components"]["securitySchemes"] = {
+        "ApiKeyHeader": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": "API key authentication via X-API-Key header"
+        },
+        "ApiKeyAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "description": "API key via Authorization: ApiKey <key>"
+        },
+        "BearerJWT": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "JWT token via Authorization: Bearer <token>"
+        },
+        "BearerOIDC": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "OIDC token via Authorization: Bearer <token>"
+        }
+    }
+
+    # Add security to all endpoints (they're optional based on AUTH_ENABLED)
+    for path in openapi_schema["paths"].values():
+        for operation in path.values():
+            if isinstance(operation, dict) and "operationId" in operation:
+                operation["security"] = [
+                    {"ApiKeyHeader": []},
+                    {"ApiKeyAuth": []},
+                    {"BearerJWT": []},
+                    {"BearerOIDC": []}
+                ]
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 # Configure logging
 logging.basicConfig(
@@ -271,7 +367,7 @@ async def security_middleware(request: Request, call_next):
 
 # ===== API Endpoints =====
 
-@app.get("/healthz")
+@app.get("/healthz", tags=["system"])
 async def healthz():
     """Health check with capability reporting"""
     return {
@@ -282,7 +378,7 @@ async def healthz():
     }
 
 
-@app.get("/tools")
+@app.get("/tools", tags=["tools"])
 async def list_tools():
     """List all available tools with status"""
     tools = {}
@@ -298,7 +394,7 @@ async def list_tools():
     return {"tools": tools}
 
 
-@app.get("/tools/{tool_name}")
+@app.get("/tools/{tool_name}", tags=["tools"])
 async def get_tool_info(tool_name: str):
     """Get detailed information about a specific tool"""
     if tool_name not in TOOL_REGISTRY:
@@ -317,7 +413,7 @@ async def get_tool_info(tool_name: str):
     }
 
 
-@app.post("/exec")
+@app.post("/exec", tags=["tools"])
 async def exec_tool(
     request: Request,
     body: ExecRequest,
@@ -329,18 +425,27 @@ async def exec_tool(
 
     Supports both synchronous and asynchronous execution.
 
-    **Two ways to specify the command:**
+    **Three ways to specify the command:**
 
     1. Using `command` (full command string):
        ```json
        {"command": "dig google.com +short"}
        ```
 
-    2. Using `tool` + `args` (or `command`):
+    2. Using `tool` + `args` array:
        ```json
        {"tool": "dig", "args": ["google.com", "+short"]}
+       ```
+
+    3. Using `tool` + `command` string:
+       ```json
        {"tool": "dig", "command": "google.com +short"}
        ```
+
+    **For async execution:**
+    ```json
+    {"command": "nmap -sT -p 1-65535 example.com", "async": true}
+    ```
     """
     # Authentication (if enabled)
     api_key = None
@@ -472,7 +577,7 @@ async def exec_tool(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@app.get("/jobs/{job_id}")
+@app.get("/jobs/{job_id}", tags=["jobs"])
 async def get_job(
     request: Request,
     job_id: str,
@@ -492,7 +597,7 @@ async def get_job(
     return job
 
 
-@app.delete("/jobs/{job_id}")
+@app.delete("/jobs/{job_id}", tags=["jobs"])
 async def delete_job(
     request: Request,
     job_id: str,
@@ -512,7 +617,7 @@ async def delete_job(
     return {"message": "Job deleted", "job_id": job_id}
 
 
-@app.get("/jobs")
+@app.get("/jobs", tags=["jobs"])
 async def list_jobs(
     request: Request,
     status: Optional[str] = None,
@@ -534,7 +639,7 @@ async def list_jobs(
     }
 
 
-@app.get("/stats")
+@app.get("/stats", tags=["system"])
 async def get_stats(
     request: Request,
     authorization: Optional[str] = Header(None),

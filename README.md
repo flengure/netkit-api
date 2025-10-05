@@ -7,6 +7,67 @@ FastAPI-based HTTP/MCP API for network diagnostics, scanning, and security audit
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/flengure/netkit-api)](https://hub.docker.com/r/flengure/netkit-api)
 
+## ⚠️ Security Warning
+
+**Do not expose the HTTP API publicly without:**
+1. **Strong authentication** (OIDC/JWT preferred, API keys minimum)
+2. **IP whitelist configuration** (SCAN_WHITELIST)
+3. **Aggressive rate limiting** (RATE_LIMIT_PER_IP)
+4. **Target restrictions** (SCAN_BLACKLIST to prevent abuse)
+
+### Two-Tier Deployment Architecture
+
+This project supports a **two-tier security model** for production deployments:
+
+**Private Instance (Full Capabilities):**
+- Runs as **root** with `CAP_NET_RAW` + `CAP_NET_ADMIN`
+- Full functionality: nmap SYN scans (`-sS`), traceroute, mtr, masscan
+- Bound to **localhost only** (`[::1]:8090` or `127.0.0.1:8090`)
+- For internal/trusted automation only
+- Never expose directly to the internet
+
+**Public Instance (Safe Mode):**
+- Runs as **non-root** (`user: 1000:1000`) with **no capabilities**
+- Limited to safe tools: nmap TCP scans (`-sT`), dig, curl, whois, SSL scanners
+- Suitable for controlled public access with strong authentication
+- Lower risk if compromised (cannot create raw sockets)
+- Reduced resource limits
+
+Both instances should be behind a **reverse proxy** (Caddy/nginx) with TLS termination.
+
+**Example docker-compose.yml:**
+```yaml
+services:
+  # Internal - full capabilities
+  netkit-api:
+    image: flengure/netkit-api:latest
+    command: --http
+    ports:
+      - "[::1]:8090:8090"  # localhost only
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    env_file: .env
+
+  # Public - restricted
+  netkit-api-public:
+    image: flengure/netkit-api:latest
+    command: --http
+    user: "1000:1000"  # non-root
+    ports:
+      - "[::1]:8091:8090"  # localhost only
+    cap_drop:
+      - ALL  # no capabilities
+    env_file: .env_public
+```
+
+**Why root + capabilities is risky:**
+- Command injection → arbitrary code execution as root
+- `CAP_NET_RAW` → can launch network attacks from your IP
+- Container escape → potential host compromise
+
+See [SECURITY.md](SECURITY.md) for detailed security information.
+
 ## Installation
 
 ```bash
@@ -354,21 +415,212 @@ curl http://localhost:8090/tools
 curl http://localhost:8090/tools/nmap
 ```
 
-## API Endpoints
+## API Reference
+
+Full API documentation available at `/docs` (Swagger UI) when running in HTTP mode.
 
 ### Tool Execution
-- `POST /exec` - Execute any tool (unified endpoint)
-- `GET /tools` - List all available tools
-- `GET /tools/<name>` - Get info about specific tool
+
+#### `POST /exec`
+Execute any tool synchronously or asynchronously.
+
+**Request formats** (all equivalent):
+```json
+// Format 1: Full command string
+{"command": "dig google.com +short"}
+
+// Format 2: Tool + args array
+{"tool": "dig", "args": ["google.com", "+short"]}
+
+// Format 3: Tool + command string
+{"tool": "dig", "command": "google.com +short"}
+```
+
+**Request parameters:**
+- `command` (string, optional): Full command with arguments
+- `tool` (string, optional): Tool name (required if using `args`)
+- `args` (array, optional): Arguments as array
+- `timeout` (integer, optional): Execution timeout in seconds
+- `async` (boolean, optional): Execute asynchronously (default: false)
+- `host` (string, optional): SSH hostname (ssh tool only)
+- `user` (string, optional): SSH username (ssh tool only)
+
+**Response (sync):**
+```json
+{
+  "stdout": "142.250.185.46\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_seconds": 0.234,
+  "tool": "dig",
+  "command": "dig google.com +short"
+}
+```
+
+**Response (async):**
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "pending",
+  "tool": "nmap"
+}
+```
+
+**Error codes:**
+- `400` - Invalid payload, unknown tool, or invalid arguments
+- `401` - Authentication failed (missing or invalid credentials)
+- `403` - Authorization failed (valid token but insufficient scopes)
+- `429` - Rate limit exceeded
+- `503` - Tool unavailable or missing required capabilities
+- `504` - Execution timeout
+
+#### `GET /tools`
+List all available tools with capability requirements.
+
+**Response:**
+```json
+{
+  "tools": {
+    "nmap": {
+      "name": "nmap",
+      "description": "Network port scanner",
+      "available": true,
+      "requires_capability": true
+    },
+    "dig": {
+      "name": "dig",
+      "description": "DNS lookup",
+      "available": true,
+      "requires_capability": false
+    }
+  }
+}
+```
+
+#### `GET /tools/{tool_name}`
+Get detailed information about a specific tool.
+
+**Response:**
+```json
+{
+  "name": "nmap",
+  "description": "Network port scanner",
+  "available": true,
+  "requires_capability": true,
+  "max_timeout": 300,
+  "min_timeout": 1,
+  "default_timeout": 30
+}
+```
 
 ### Async Jobs
-- `GET /jobs/<id>` - Get job status/result
-- `DELETE /jobs/<id>` - Delete job
-- `GET /jobs?status=running` - List jobs
+
+#### `GET /jobs/{job_id}`
+Get status and result of an async job.
+
+**Response (running):**
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "running",
+  "tool": "nmap",
+  "created_at": "2025-10-04T12:34:56Z"
+}
+```
+
+**Response (completed):**
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "tool": "nmap",
+  "stdout": "...",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_seconds": 45.2,
+  "created_at": "2025-10-04T12:34:56Z",
+  "completed_at": "2025-10-04T12:35:41Z"
+}
+```
+
+**Error codes:**
+- `404` - Job not found
+
+#### `GET /jobs`
+List all jobs, optionally filtered by status.
+
+**Query parameters:**
+- `status` (string, optional): Filter by status (`pending`, `running`, `completed`, `failed`)
+- `limit` (integer, optional): Maximum number of results (default: 100)
+
+**Response:**
+```json
+{
+  "jobs": [
+    {
+      "job_id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "completed",
+      "tool": "nmap"
+    }
+  ],
+  "count": 1
+}
+```
+
+#### `DELETE /jobs/{job_id}`
+Cancel and delete a job.
+
+**Response:**
+```json
+{
+  "message": "Job deleted",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
 
 ### System
-- `GET /healthz` - Health check with capabilities
-- `GET /stats` - API statistics
+
+#### `GET /healthz`
+Health check endpoint with capability reporting.
+
+**Response:**
+```json
+{
+  "ok": true,
+  "version": "2.0.0",
+  "service": "netkit-api",
+  "capabilities": {
+    "has_net_raw": true,
+    "has_net_admin": true,
+    "is_root": true,
+    "limited_tools": []
+  }
+}
+```
+
+#### `GET /stats`
+API statistics and metrics.
+
+**Response:**
+```json
+{
+  "rate_limiter": {
+    "global_requests": 42,
+    "ip_requests": {"127.0.0.1": 10},
+    "key_requests": {"key_abc": 5}
+  },
+  "job_manager": {
+    "total_jobs": 15,
+    "pending": 2,
+    "running": 3,
+    "completed": 10
+  },
+  "tools": {
+    "total": 15,
+    "available": 15
+  }
+}
+```
 
 ## Configuration
 
