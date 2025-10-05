@@ -696,7 +696,7 @@ JOB_CLEANUP_INTERVAL=3600   # seconds
 
 **SSH** (for mounted .ssh directory):
 ```bash
-SSH_DIR=/home/runner/.ssh
+SSH_DIR=/root/.ssh
 ```
 
 **Logging**:
@@ -749,7 +749,7 @@ services:
       - RATE_LIMIT_PER_IP=20
       - RATE_LIMIT_PER_KEY=50
     volumes:
-      - ~/.ssh:/home/runner/.ssh:ro
+      - ~/.ssh:/root/.ssh:ro
     restart: unless-stopped
 ```
 
@@ -765,9 +765,8 @@ netkit-api includes an MCP (Model Context Protocol) server for integration with 
 docker run -i \
   --cap-add=NET_RAW \
   --cap-add=NET_ADMIN \
-  -v ~/.ssh:/home/runner/.ssh:ro \
-  flengure/netkit-api:latest \
-  python /app/mcp/server.py
+  -v ~/.ssh:/root/.ssh:ro \
+  flengure/netkit-api:latest
 ```
 
 ### Claude Desktop Configuration
@@ -791,7 +790,7 @@ Add to your Claude Desktop config file:
         "--cap-add=NET_RAW",
         "--cap-add=NET_ADMIN",
         "-v",
-        "/Users/YOUR_USERNAME/.ssh:/home/runner/.ssh:ro",
+        "/Users/YOUR_USERNAME/.ssh:/root/.ssh:ro",
         "-e",
         "SCAN_WHITELIST=10.0.0.0/8,192.168.0.0/16,*.example.com",
         "-e",
@@ -866,8 +865,8 @@ All 15 tools are exposed as MCP tools with the same names:
 
 **"includes invalid characters for a local volume name"**
 - You're using `~` in the JSON config. Replace it with the absolute path to your home directory.
-- ❌ Wrong: `"~/.ssh:/home/runner/.ssh:ro"`
-- ✅ Correct: `"/Users/john/.ssh:/home/runner/.ssh:ro"`
+- ❌ Wrong: `"~/.ssh:/root/.ssh:ro"`
+- ✅ Correct: `"/Users/john/.ssh:/root/.ssh:ro"`
 
 **"Permission denied" or tools not working**
 - Some tools require `--cap-add=NET_RAW` and `--cap-add=NET_ADMIN`
@@ -875,7 +874,8 @@ All 15 tools are exposed as MCP tools with the same names:
 - If using only basic tools (dig, curl, whois), you can remove the capability flags
 
 **"SSH authentication failed" or "Host key verification failed"**
-- Ensure your `.ssh` directory is mounted: `"-v", "/full/path/to/.ssh:/home/runner/.ssh:ro"`
+- Ensure your `.ssh` directory is mounted to the correct path: `"-v", "/full/path/to/.ssh:/root/.ssh:ro"`
+- Container runs as **root**, so SSH keys must be mounted to `/root/.ssh`, not `/home/runner/.ssh`
 - Verify your private keys have correct permissions (600) on the host
 - The `ssh` tool will still work without the mount, you just need to provide credentials another way
 

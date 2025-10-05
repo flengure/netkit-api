@@ -199,7 +199,7 @@ services:
       - "8090:8090"
     volumes:
       - ./config.yaml:/etc/netkit-api/config.yaml:ro
-      - ~/.ssh:/home/runner/.ssh:ro
+      - ~/.ssh:/root/.ssh:ro
     environment:
       # Override or extend config file settings
       - SCAN_WHITELIST=${SCAN_WHITELIST:-}

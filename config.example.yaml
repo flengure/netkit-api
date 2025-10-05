@@ -62,7 +62,7 @@ job_cleanup_interval: 3600  # Cleanup completed jobs after 1 hour
 # ===== Server Settings =====
 
 api_port: 8090
-ssh_dir: "/home/runner/.ssh"
+ssh_dir: "/root/.ssh"
 
 # ===== Logging =====
 

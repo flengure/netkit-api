@@ -24,7 +24,7 @@ services:
     # Optional: Mount config file
     volumes:
       - ./config.yaml:/etc/netkit-api/config.yaml:ro
-      # - ~/.ssh:/home/runner/.ssh:ro  # Uncomment for SSH functionality
+      # - ~/.ssh:/root/.ssh:ro  # Uncomment for SSH functionality
 
     environment:
       # Authentication (optional - if not set, auth is disabled)
